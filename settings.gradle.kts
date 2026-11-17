@@ -22,3 +22,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "pocket-agent"
 include(":app")
+include(":phone-fixture")
+project(":phone-fixture").projectDir = file("tools/phone-fixture")

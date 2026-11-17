@@ -1,0 +1,6 @@
+<resources>
+    <item name="message_body" type="id" />
+    <item name="message_extra" type="id" />
+    <item name="contact_search" type="id" />
+    <item name="fixture_state" type="id" />
+</resources>

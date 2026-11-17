@@ -369,14 +369,15 @@ class AgentLoopTest {
     // ---- confirmation detail ----
 
     private val fieldAndSend = screenOf(
-        node("a1", role = "field", text = "Message", editable = true),
+        node("a1", role = "field", editable = true).copy(hint="Message"),
         node("a2", role = "button", text = "Send", clickable = true),
     )
 
     @Test fun confirmRequestCarriesLastTypedText() = runTest {
         val ui = FakeUi()
         val llm = FakeLlm(listOf(typeInto("a1", "Send me the OTP 4821"), tap("a2"), done()))
-        loop(llm, FakeDevice(listOf(fieldAndSend)), ui).run("t", fieldAndSend)
+        val typed=fieldAndSend.copy(root=fieldAndSend.root.copy(children=fieldAndSend.root.children.map { if(it.editable)it.copy(text="Send me the OTP 4821") else it }))
+        loop(llm, FakeDevice(listOf(typed)), ui).run("t", fieldAndSend)
         assertEquals("Send me the OTP 4821", ui.confirmRequests.single().detail)
     }
 
@@ -387,11 +388,12 @@ class AgentLoopTest {
         assertNull(ui.confirmRequests.single().detail)
     }
 
-    @Test fun confirmDetailIsCappedAt200Characters() = runTest {
+    @Test fun confirmDetailIncludesTheWholeVisibleDraft() = runTest {
         val ui = FakeUi()
         val llm = FakeLlm(listOf(typeInto("a1", "x".repeat(500)), tap("a2"), done()))
-        loop(llm, FakeDevice(listOf(fieldAndSend)), ui).run("t", fieldAndSend)
-        assertEquals(200, ui.confirmRequests.single().detail!!.length)
+        val typed=fieldAndSend.copy(root=fieldAndSend.root.copy(children=fieldAndSend.root.children.map { if(it.editable)it.copy(text="x".repeat(500)) else it }))
+        loop(llm, FakeDevice(listOf(typed)), ui).run("t", fieldAndSend)
+        assertEquals(500, ui.confirmRequests.single().detail!!.length)
     }
 
     @Test fun aFailedTypeIsNotRememberedAsDetail() = runTest {
@@ -568,7 +570,7 @@ class AgentLoopTest {
         assertTrue(vision.tools.any { it.name == "screenshot" })
         // quiz_record needs a granted folder and second_opinion needs a second model; neither is set up here.
         assertEquals(
-            Tools.definitions.size - 3 - Tools.NOTIFICATION_TOOLS.size - Tools.FILE_TOOLS.size - Tools.QUIZ_TOOLS.size,
+            Tools.definitions.size - 4 - Tools.NOTIFICATION_TOOLS.size - Tools.FILE_TOOLS.size - Tools.QUIZ_TOOLS.size,
             text.tools.size,
         )
     }

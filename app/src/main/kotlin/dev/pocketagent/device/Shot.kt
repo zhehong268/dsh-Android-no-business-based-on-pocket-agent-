@@ -7,7 +7,9 @@ package dev.pocketagent.device
 data class Mark(val index: Int, val label: String, val x: Int, val y: Int)
 
 /** A screenshot plus the boxes drawn on it. [marks] is empty when nothing worth pointing at was on the screen. */
-class Shot(val png: ByteArray, val marks: List<Mark>, val contentHash: String? = null)
+class Shot(val png: ByteArray, val marks: List<Mark>, val contentHash: String? = null, val context: String? = null)
+
+data class FontReference(val text: String, val png: ByteArray?)
 
 /**
  * Turns [Mark]s into the few lines a model reads next to the picture. Coordinates are given in real pixels because

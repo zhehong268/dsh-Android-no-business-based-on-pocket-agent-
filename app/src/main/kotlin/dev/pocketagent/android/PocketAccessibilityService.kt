@@ -1,6 +1,7 @@
 package dev.pocketagent.android
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
 
@@ -61,8 +62,10 @@ class PocketAccessibilityService : AccessibilityService() {
         var types = 0
         if (taskEvents) types = types or TASK_EVENT_TYPES
         if (recordingEvents) types = types or RECORDING_EVENT_TYPES
-        if (info.eventTypes == types) return
+        val flags=if(taskEvents)info.flags else info.flags and AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS.inv()
+        if (info.eventTypes == types && info.flags==flags) return
         info.eventTypes = types
+        info.flags=flags
         serviceInfo = info
     }
 

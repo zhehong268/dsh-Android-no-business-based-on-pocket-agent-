@@ -8,6 +8,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import dev.pocketagent.R
 import dev.pocketagent.agent.ConfirmRequest
 import dev.pocketagent.ui.kit.Kit
@@ -113,7 +114,15 @@ class ConfirmCard(private val context: Context) {
             details.addView(r, Kit.lp())
             if (i < rows.lastIndex) details.addView(View(c).apply { setBackgroundColor(color(c, R.color.pa_line)) }, Kit.lp(h = 1))
         }
-        sheet.addView(details, Kit.lp().apply { topMargin = dp(c, 16) })
+        val scroll=object:ScrollView(c) {
+            override fun onMeasure(widthMeasureSpec:Int,heightMeasureSpec:Int) {
+                val maximum=(resources.displayMetrics.heightPixels*0.42f).toInt()
+                val given=View.MeasureSpec.getSize(heightMeasureSpec)
+                val cap=if(View.MeasureSpec.getMode(heightMeasureSpec)==View.MeasureSpec.UNSPECIFIED)maximum else minOf(given,maximum)
+                super.onMeasure(widthMeasureSpec,View.MeasureSpec.makeMeasureSpec(cap,View.MeasureSpec.AT_MOST))
+            }
+        }.apply { isFillViewport=false;addView(details) }
+        sheet.addView(scroll, Kit.lp().apply { topMargin = dp(c, 16) })
 
         // two identical buttons: nothing nudges the choice
         val buttons = Kit.hstack(c, 12)
@@ -145,8 +154,11 @@ class ConfirmCard(private val context: Context) {
                 b.performHapticFeedback(if (result) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.REJECT)
                 if (card === outer) card = null
                 outer.animate().alpha(0f).translationY(dpf(context, 40)).setDuration(200).setInterpolator(Kit.ease)
-                    .withEndAction { Overlays.remove(context, outer) }.start()
-                onResult(result)
+                    .withEndAction {
+                        // The next gesture may target the bottom of the app, underneath this window.
+                        Overlays.remove(context, outer)
+                        onResult(result)
+                    }.start()
             }
         }
 }

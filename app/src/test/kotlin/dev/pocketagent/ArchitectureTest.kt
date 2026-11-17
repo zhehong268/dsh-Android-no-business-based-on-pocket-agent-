@@ -234,7 +234,7 @@ class ArchitectureTest {
         val config = parseXml("src/main/res/xml/accessibility_config.xml")
         assertEquals("accessibility-service", config.tagName)
         assertTrue(!config.hasAttribute("android:accessibilityEventTypes"), "event types are switched on in code, never in the XML")
-        assertEquals("flagRetrieveInteractiveWindows|flagReportViewIds", config.getAttribute("android:accessibilityFlags"))
+        assertEquals("flagRetrieveInteractiveWindows|flagReportViewIds|flagInputMethodEditor", config.getAttribute("android:accessibilityFlags"))
         listOf("canRetrieveWindowContent", "canPerformGestures", "canTakeScreenshot").forEach {
             assertEquals("true", config.getAttribute("android:$it"), "$it must be true")
         }

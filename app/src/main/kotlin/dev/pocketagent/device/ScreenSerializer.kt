@@ -15,6 +15,7 @@ class ScreenSerializer(private val ownPackage: String, private val maxChars: Int
         out.append("<screen_data app=\"").append(cleanUntrusted(screen.packageName, MAX_LABEL))
             .append("\" label=\"").append(cleanUntrusted(screen.appLabel.orEmpty(), MAX_LABEL)).append("\">\n")
         if (screen.keyboardVisible) out.append("[键盘已展开，可能遮挡下半屏]\n")
+        screen.environment?.let { out.append("<display_context>").append(cleanUntrusted(it,2000)).append("</display_context>\n") }
         val budget = maxChars - out.length - 60
         val selected = if (lines.sumOf { it.text.length + 1 } <= budget) lines.indices.toSet() else {
             var remaining = budget
@@ -29,6 +30,28 @@ class ScreenSerializer(private val ownPackage: String, private val maxChars: Int
     }
 
     private data class Row(val text: String, val priority: Int)
+
+    /** Original Unicode strings survive decorative fonts; no visual OCR is involved. */
+    fun source(screen: Screen): String = buildString {
+        append("<screen_data app=\"").append(cleanUntrusted(screen.packageName,MAX_LABEL)).append("\" source=\"runtime_accessibility\">\n")
+        var omitted=0
+        fun visit(node:ScreenNode) {
+            if(node.isPassword || node.packageName==ownPackage)return
+            val row=buildString {
+                append('[').append(node.id).append("] class=\"").append(cleanUntrusted(node.className.orEmpty(),160))
+                append("\" view_id=\"").append(cleanUntrusted(node.viewId.orEmpty(),240)).append("\" editable=").append(node.editable)
+                append(" bounds=").append(node.bounds)
+                for((key,value) in listOf("text" to node.text,"description" to node.description,"hint" to node.hint))
+                    if(value!=null)append(' ').append(key).append("=\"").append(cleanUntrustedBlock(value,4000)).append('"')
+                append('\n')
+            }
+            if(length+row.length<48_000)append(row) else omitted++
+            node.children.forEach(::visit)
+        }
+        visit(screen.root)
+        if(omitted>0)append("[truncated: ").append(omitted).append(" nodes]\n")
+        append("</screen_data>")
+    }
 
     /** Depth-first. Unkept nodes are skipped and their children promoted one level up. */
     private fun collect(node: ScreenNode, depth: Int, ancestorLabel: String?, out: MutableList<Row>) {

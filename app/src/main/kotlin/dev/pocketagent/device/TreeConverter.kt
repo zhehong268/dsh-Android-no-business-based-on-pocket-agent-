@@ -25,7 +25,7 @@ class TreeConverter(private val maxDepth: Int = 60, private val maxNodes: Int = 
                 text = node.text,
                 description = node.description,
                 clickable = node.clickable,
-                editable = node.editable,
+                editable = node.editable || node.className.orEmpty().endsWith("EditText"),
                 scrollable = node.scrollable,
                 isPassword = node.isPassword,
                 packageName = node.packageName,
@@ -40,6 +40,7 @@ class TreeConverter(private val maxDepth: Int = 60, private val maxNodes: Int = 
                 stateDescription = node.stateDescription,
                 viewId = node.viewId,
                 hint = node.hint,
+                className = node.className,
             )
         }
 

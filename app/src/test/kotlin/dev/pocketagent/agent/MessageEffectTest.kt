@@ -15,6 +15,24 @@ class MessageEffectTest {
     @Test fun aNewBubbleAndClearedComposerVerifyTheSend() {
         assertTrue(effect().verified(after(node("b3",text=body))))
     }
+    @Test fun confirmationPreviewsTheWholeDraftInsteadOfOnlyTheLastAppend() {
+        assertEquals(body,MessageEffect.preview(before(),send,"十点见"))
+    }
+    @Test fun anEmptyVisibleComposerDoesNotPreviewStaleTypedText() {
+        assertNull(MessageEffect.preview(after(),send,"旧正文"))
+    }
+    @Test fun aDuplicatedOrLongerBubbleDoesNotVerifyTheRequestedBody() {
+        assertFalse(effect().verified(after(node("b3",text=body+body))))
+        assertFalse(effect().verified(after(node("b3",text=body+"，另加一句"))))
+    }
+    @Test fun aPendingBubbleDoesNotVerifyTheSend() {
+        assertFalse(effect().verified(after(node("b3",text=body+" 发送中"))))
+    }
+    @Test fun changedCaseInTheMessageBodyDoesNotVerifyTheSend() {
+        val initial=screenOf(input.copy(text="Aa"),send)
+        val pending=MessageEffect.begin(initial,send,"Aa")!!
+        assertFalse(pending.verified(after(node("b3",text="aA 已发送"))))
+    }
     @Test fun anExistingBubbleCannotVerifyANewSend() {
         assertFalse(effect(before(node("a3",text=body))).verified(after(node("b3",text=body))))
     }

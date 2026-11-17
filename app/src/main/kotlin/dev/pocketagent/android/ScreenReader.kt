@@ -1,6 +1,7 @@
 package dev.pocketagent.android
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.os.Build
@@ -27,7 +28,7 @@ import java.util.IdentityHashMap
 internal class ScreenReader(private val service: AccessibilityService) {
     private val ownPackage: String = service.packageName
     private val picker = WindowPicker(ownPackage)
-    private val converter = TreeConverter(MAX_DEPTH, MAX_NODES)
+    private val environment = VisualEnvironment(service)
 
     /** One observation: the screen the model sees, and the live node behind each of its ids. */
     class Reading(val screen: Screen, val handles: Map<String, AccessibilityNodeInfo>)
@@ -44,11 +45,16 @@ internal class ScreenReader(private val service: AccessibilityService) {
     }
 
     suspend fun current(): CurrentWindow = withContext(Dispatchers.Default) { pickWindow() }
+    fun currentNow(): CurrentWindow = pickWindow()
 
     /** Reads the chosen window. A missing or invisible root gives an empty screen: a root group with no children. */
     suspend fun read(observation: Int): Reading = withContext(Dispatchers.Default) {
         val window = pickWindow()
-        val copier = Copier()
+        val detailed=(service.serviceInfo?.flags?:0) and AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS!=0
+        val depth=if(detailed)80 else MAX_DEPTH
+        val limit=if(detailed)3_000 else MAX_NODES
+        val copier = Copier(depth,limit)
+        val converter=TreeConverter(depth,limit)
         val raw = window.root?.let { copier.copy(it, depth = 0) }
         val packageName = raw?.packageName ?: window.packageName
         val converted = raw?.let { converter.convert(it, observation) }
@@ -65,6 +71,7 @@ internal class ScreenReader(private val service: AccessibilityService) {
                 ownWindowBounds = window.ownWindowBounds,
                 keyboardVisible = service.windows?.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } == true,
                 windowId = window.id,
+                environment = environment.describe(),
             ),
             handles,
         )
@@ -127,7 +134,7 @@ internal class ScreenReader(private val service: AccessibilityService) {
      * would stop keeping: below invisible nodes, below [MAX_DEPTH], and after [MAX_NODES] visible nodes. Each copy
      * remembers its live node by identity, because [RawNode] equality is by value.
      */
-    private class Copier {
+    private class Copier(private val maxDepth:Int,private val maxNodes:Int) {
         private val live = IdentityHashMap<RawNode, AccessibilityNodeInfo>()
         private var visibleCount = 0
 
@@ -137,9 +144,9 @@ internal class ScreenReader(private val service: AccessibilityService) {
             val visible = node.isVisibleToUser
             if (visible) visibleCount++
             val children = ArrayList<RawNode>()
-            if (visible && depth < MAX_DEPTH) {
+            if (visible && depth < maxDepth) {
                 for (i in 0 until node.childCount) {
-                    if (visibleCount >= MAX_NODES) break
+                    if (visibleCount >= maxNodes) break
                     val child = node.getChild(i) ?: continue
                     children.add(copy(child, depth + 1))
                 }
@@ -151,9 +158,10 @@ internal class ScreenReader(private val service: AccessibilityService) {
                 text = node.text?.toString()?.takeUnless { node.isShowingHintText },
                 description = node.contentDescription?.toString(),
                 clickable = node.isClickable,
-                editable = node.isEditable,
+                editable = node.isEditable || node.className?.toString()?.endsWith("EditText")==true ||
+                    (node.inputType!=0 && node.actionList.any { it.id==AccessibilityNodeInfo.ACTION_SET_TEXT || it.id==AccessibilityNodeInfo.ACTION_PASTE }),
                 scrollable = node.isScrollable,
-                isPassword = node.isPassword,
+                isPassword = node.isPassword || dev.pocketagent.device.TextEntry.isPasswordType(node.inputType),
                 visibleToUser = visible,
                 packageName = node.packageName?.toString().orEmpty(),
                 bounds = rect.toBounds(),

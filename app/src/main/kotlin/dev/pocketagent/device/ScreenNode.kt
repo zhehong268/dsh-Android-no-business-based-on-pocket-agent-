@@ -27,6 +27,7 @@ data class ScreenNode(
     val stateDescription: String? = null,
     val viewId: String? = null,
     val hint: String? = null,
+    val className: String? = null,
 ) {
     /** Display label; [hint] is a fallback, never the actual value stored in [text]. */
     fun label(): String? = listOf(text, description, hint).firstNotNullOfOrNull { it?.trim()?.takeIf(String::isNotEmpty) }
@@ -41,6 +42,7 @@ data class Screen(
     val ownWindowBounds: List<Bounds> = emptyList(),
     val keyboardVisible: Boolean = false,
     val windowId: Int? = null,
+    val environment: String? = null,
 ) {
     /** Every node, depth-first, parents before children. */
     fun all(): Sequence<ScreenNode> = sequence {

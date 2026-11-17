@@ -4,13 +4,15 @@ import {createServer} from 'node:http';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import assert from 'node:assert/strict';
+import {lockPhone} from './phone-test-lock.mjs';
 const adb=process.env.ADB || 'adb';
 const serial=process.env.DSH_TEST_SERIAL || 'emulator-5556';
 if(!serial.startsWith('emulator-'))throw Error('仅允许在隔离模拟器运行此回归脚本');
+const release=lockPhone(serial);
 const out=process.env.DSH_TEST_OUT || fileURLToPath(new URL('../build/device-smoke',import.meta.url));
 mkdirSync(out,{recursive:true});
 function run(...args){const r=spawnSync(adb,['-s',serial,...args],{encoding:'utf8',timeout:30000});if(r.status!==0)throw Error(`adb ${args.slice(0,3).join(' ')}: ${r.stderr}`);return r.stdout;}
-function prefsWrite(xml){const r=spawnSync(adb,['-s',serial,'shell','run-as','dev.pocketagent','sh','-c',"'cat > shared_prefs/pocketagent_setup.xml'"],{input:xml,encoding:'utf8',timeout:10000});if(r.status!==0)throw Error('cannot write test preferences');}
+function prefsWrite(xml){run('shell','run-as','dev.pocketagent','rm','-f','shared_prefs/pocketagent_setup.xml.bak');const r=spawnSync(adb,['-s',serial,'shell','run-as','dev.pocketagent','sh','-c',"'cat > shared_prefs/pocketagent_setup.xml'"],{input:xml,encoding:'utf8',timeout:10000});if(r.status!==0)throw Error('cannot write test preferences');}
 function shot(name){const r=spawnSync(adb,['-s',serial,'exec-out','screencap','-p'],{timeout:10000});if(r.status!==0)throw Error('screenshot failed');writeFileSync(`${out}/${name}.png`,r.stdout);}
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 let original,enabled,proxy,token=randomBytes(24).toString('hex'),counter=0,server,modelRequests=0,failModel=false;
@@ -22,12 +24,18 @@ function saveResult(name,result){const stripped={...result,content:result.conten
 function nodeId(result,label){const line=text(result).split('\n').find(l=>l.includes(`"${label}"`)&&l.includes('['));assert.ok(line,`node ${label}`);return line.match(/\[([a-z]+\d+)\]/)?.[1];}
 try{
   if(!run('get-state').includes('device'))throw Error('test emulator not ready');
+  let booted=false;
+  for(let attempt=0;attempt<100;attempt++){if(run('shell','getprop','sys.boot_completed').trim()==='1'){booted=true;break;}await delay(500);}
+  assert.ok(booted,'模拟器启动超时，尚未进入可安装应用的状态');
   run('install','-r',process.env.DSH_TEST_APK || fileURLToPath(new URL('../app/build/outputs/apk/debug/app-debug.apk',import.meta.url)));
   await delay(1800); // Let package replacement finish before changing accessibility settings.
+  enabled=run('shell','settings','get','secure','enabled_accessibility_services').trim();
+  const without=enabled.split(':').filter(x=>x&&x!=='null'&&!x.startsWith('dev.pocketagent/')).join(':');
+  run('shell','settings','put','secure','enabled_accessibility_services',without||"''");await delay(450);
+  run('shell','am','force-stop','dev.pocketagent');
   try { original=run('shell','run-as','dev.pocketagent','cat','shared_prefs/pocketagent_setup.xml'); }
   catch { original='<?xml version="1.0" encoding="utf-8"?><map></map>'; run('shell','run-as','dev.pocketagent','mkdir','-p','shared_prefs'); }
   original=original.replace(/<map\s*\/>/,'<map></map>');
-  enabled=run('shell','settings','get','secure','enabled_accessibility_services').trim();
   proxy=run('shell','settings','get','global','http_proxy').trim();
   run('shell','settings','put','global','http_proxy',':0');run('shell','settings','delete','global','http_proxy');
   run('shell','am','force-stop','dev.pocketagent');
@@ -36,7 +44,6 @@ try{
   const configured=xml.replace(/<(string|boolean|int) name="config\.[^"]+"[^>]*>(?:[^<]*)<\/\1>/g,'').replace(/<(?:string|boolean|int) name="config\.[^"]+"[^>]*\/>/g,'').replace('</map>',
     '<string name="config.kind">OPENAI_COMPAT</string><string name="config.baseUrl">http://127.0.0.1:18100/v1</string><string name="config.model">local-fixture</string><string name="config.images">true</string><string name="config.contextTokens">128000</string><string name="config.maxOutputTokens">4096</string></map>');
   prefsWrite(configured);
-  const without=enabled.split(':').filter(x=>x&&x!=='null'&&!x.startsWith('dev.pocketagent/')).join(':');
   run('shell','settings','put','secure','enabled_accessibility_services',without||"''");
   run('shell','settings','put','secure','enabled_accessibility_services',[without,'dev.pocketagent/dev.pocketagent.android.PocketAccessibilityService'].filter(Boolean).join(':'));
   run('shell','settings','put','secure','accessibility_enabled','1');
@@ -71,7 +78,10 @@ try{
     },1400));return;
   }if(req.url.startsWith('/event')){events.push(new URL(req.url,'http://local').searchParams.get('name'));res.end('ok');return;}res.setHeader('content-type','text/html;charset=utf-8');res.end(req.url.startsWith('/canvas')?canvas:req.url.startsWith('/chat-pending')?pendingChat:req.url.startsWith('/chat')?chat:html);});
   await new Promise(r=>server.listen(18100,'0.0.0.0',r));
-  const packages=run('shell','pm','list','packages'); const browser=packages.includes('org.chromium.webview_shell')?'org.chromium.webview_shell/.WebViewBrowserActivity':'com.android.chrome/com.google.android.apps.chrome.Main'; run('shell','am','start','-W','-a','android.intent.action.VIEW','-d','http://127.0.0.1:18100/','-n',browser);await delay(2500);
+  if(process.env.DSH_NATIVE_ONLY!=='1') {
+  const packages=run('shell','pm','list','packages'); const browser=packages.includes('org.chromium.webview_shell')?'org.chromium.webview_shell/.WebViewBrowserActivity':'com.android.chrome/com.google.android.apps.chrome.Main';
+  function openPage(path){run('shell','am','force-stop',browser.split('/')[0]);run('shell','am','start','-W','-a','android.intent.action.VIEW','-d','http://127.0.0.1:18100'+path,'-n',browser);}
+  openPage('/');await delay(2500);
   const pending=rpc('control_start',{task:'仅在本地回归测试页面检查读屏、勾选、中文输入和截图，允许在本地测试会话发送测试正文，禁止联系真实用户。'}).then(result=>({result}),error=>({error}));
   await delay(900);shot('01-approval');console.log(`WAIT_APPROVAL ${out}/01-approval.png`);
   if(process.env.DSH_SMOKE_APPROVE==='1') { await delay(700);run('shell','input','tap','780','2180'); }
@@ -120,7 +130,7 @@ try{
   // Ordinary canvas navigation is allowed; payments and destructive targets still require approval.
   saveResult('08-canvas-action',point);check('画布操作有可见反馈或风险确认',typeof point.isError==='boolean');
   // Local chat fixture: actual browser touches and Chinese text, without contacting anybody.
-  run('shell','am','start','-W','-a','android.intent.action.VIEW','-d','http://127.0.0.1:18100/chat','-n',browser);
+  openPage('/chat');
   await delay(1000);
   const chatList=await rpc('read_screen');
   check('聊天列表自动带图',chatList.content.some(x=>x.type==='image'));
@@ -143,7 +153,7 @@ try{
   const sent=saveResult('11-message-result',await rpc('read_screen'));
   check('发出后看见正文和已发送标记',text(sent).includes('已发送')&&text(sent).includes(message));
   check('输入提示词不被当作草稿内容',text(sent).split('\n').some(l=>l.includes('view_id="message"')&&l.includes('value_empty=true')));
-  run('shell','am','start','-W','-a','android.intent.action.VIEW','-d','http://127.0.0.1:18100/chat','-n',browser);
+  openPage('/chat');
   await delay(800);await rpc('read_screen');
   const draft='连续操作草稿';
   const sequence=saveResult('11-sequence',await rpc('perform_steps',{steps:[
@@ -155,7 +165,7 @@ try{
   check('连续操作不能绕过发送确认',blockedSequence.isError&&!events.includes('sent:'+draft)&&!run('shell','dumpsys','window','windows').includes('dsh-confirm-card'));
   const missing=await rpc('perform_steps',{steps:[{action:'tap',target:{text:'不存在的按钮'}},{action:'back'}]});
   check('连续操作找不到目标时停止后续动作',missing.isError&&text(missing).includes('0/2'));
-  run('shell','am','start','-W','-a','android.intent.action.VIEW','-d','http://127.0.0.1:18100/chat-pending','-n',browser);
+  openPage('/chat-pending');
   await delay(800);await rpc('read_screen');await rpc('tap_text',{text:'测试联系人',scrolls:0});
   const pendingField=await rpc('find_elements',{editable:true,view_id:'message'});
   const pendingId=text(pendingField).match(/\[([a-z]+\d+)\]/)?.[1];assert.ok(pendingId,'pending message field');
@@ -197,11 +207,20 @@ try{
   const failed=await failedPending;check('模型错误有失败结果',failed.isError);
   await delay(500);check('模型错误后面板自动移除',!run('shell','dumpsys','window','windows').includes('dsh-task-panel'));
   shot('14-idle');
+  }
+  if(process.env.DSH_NATIVE_FIXTURE==='1') {
+    const {nativeChatCases}=await import('./native-chat-cases.mjs');
+    await nativeChatCases({run,rpc,check,saveResult,shot});
+  }
 }catch(e){checks.push({name:'device run',passed:false,error:e.message});console.error(e.stack);process.exitCode=1;}
 finally{
   // Restore the emulator's settings in memory; no account token is written to the report.
   try{await rpc('control_stop');}catch{}
-  if(original){run('shell','am','force-stop','dev.pocketagent');prefsWrite(original.replace(/<boolean name="settings\.computerLink"[^>]*\/>/g,'').replace(/<string name="settings\.linkToken">[^<]*<\/string>/g,''));}
+  if(original){
+    const without=enabled?.split(':').filter(x=>x&&x!=='null'&&!x.startsWith('dev.pocketagent/')).join(':');
+    run('shell','settings','put','secure','enabled_accessibility_services',without||"''");await delay(250);
+    run('shell','am','force-stop','dev.pocketagent');prefsWrite(original.replace(/<boolean name="settings\.computerLink"[^>]*\/>/g,'').replace(/<string name="settings\.linkToken">[^<]*<\/string>/g,''));
+  }
   if(enabled!==undefined)run('shell','settings','put','secure','enabled_accessibility_services',enabled&&enabled!=='null'?enabled:"''");
   if(proxy!==undefined){if(proxy&&proxy!=='null')run('shell','settings','put','global','http_proxy',proxy);else {run('shell','settings','put','global','http_proxy',':0');run('shell','settings','delete','global','http_proxy');}}
   try{run('forward','--remove','tcp:18765');}catch{}
@@ -210,4 +229,5 @@ finally{
   server?.closeAllConnections();
   writeFileSync(`${out}/results.json`,JSON.stringify({checks,events,timings},null,2),'utf8');
   console.log(`RESULTS ${checks.filter(x=>x.passed).length}/${checks.length}`);
+  release();
 }

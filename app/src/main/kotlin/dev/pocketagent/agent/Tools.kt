@@ -23,6 +23,11 @@ sealed interface ToolCall {
     data class ReadElement(val nodeId: String) : ToolCall
     data class FindElements(val text: String, val container: String?, val role: String? = null, val editable: Boolean? = null, val viewId: String? = null) : ToolCall
     data class PerformSteps(val steps:List<SequenceStep>,val finishIfVerified:Boolean=false,val summary:String?=null) : ToolCall
+    data object ReadUiSource : ToolCall
+    data object FindChatInput : ToolCall
+    data class FontReference(val text:String) : ToolCall
+    data class OpenContact(val name:String,val hint:String="") : ToolCall
+    data class FillChat(val recipient:String,val text:String,val mode:String="replace",val finishIfVerified:Boolean=false) : ToolCall
     data class TapMark(val index: Int, val observation: Int, val irreversible: Boolean,val finishIfVerified:Boolean=false) : ToolCall
     data class WaitFor(val text: String, val seconds: Int, val checked: Boolean? = null) : ToolCall
     data class Checkpoint(val goal: String, val completed: String, val next: String, val expected: String) : ToolCall
@@ -135,6 +140,19 @@ object Tools {
         Field("node_id", Kind.STRING, description, required, min = 1, max = 20)
 
     private val specs: List<Spec> = listOf(
+        Spec("read_ui_source","读取当前界面运行控件的原始 Unicode 文本、类名、资源 ID 和边界。花字体优先读原文；这是运行时控件结构，不是反编译源码，不读取私有数据库。",emptyList()) { ToolCall.ReadUiSource },
+        Spec("find_chat_input","综合正文语义、发送按钮、下部位置和焦点找聊天输入框，区分顶部搜索栏。看不见聊天框时优先使用；候选接近时不会擅选。",emptyList()) { ToolCall.FindChatInput },
+        Spec("font_reference","读取字体信息，实际加载系统默认字体及可访问的当前应用内字体渲染参照。原文可读时按原文匹配；参照图不是屏幕。",listOf(Field("text",Kind.STRING,"需要识别的姓名或文字，最多 26 字。",min=1,max=26))) { ToolCall.FontReference(it["text"] as String) },
+        Spec("open_contact","按完整联系人或群名导航并核验会话，优先通讯录和应用内搜索，每步读取最新控件原文。重名返回候选，hint 可补充用户提供的备注；不发送消息。",listOf(
+            Field("name",Kind.STRING,"用户指定的完整姓名、备注或群名。",min=1,max=100),
+            Field("hint",Kind.STRING,"用户提供的额外备注或标识，用于重名区分，不能编造。",required=false,min=1,max=150),
+        )) { ToolCall.OpenContact(it["name"] as String,it["hint"] as String? ?: "") },
+        Spec("fill_chat","核对顶部完整收件人后自动找正文框并粘贴，不逐字操作用户键盘。找不到时检查文字/语音切换；收件人不符或正文框歧义时停止。只填草稿，不发送。",listOf(
+            Field("recipient",Kind.STRING,"已核对的完整聊天标题，必须与用户指定对象一致。",min=1,max=100),
+            Field("text",Kind.STRING,"原样填入的正文。",min=0,max=4000),
+            Field("mode",Kind.CHOICE,"replace 替换、append 追加、clear 清空。",required=false,choices=listOf("replace","append","clear")),
+            Field("finish_if_verified",Kind.BOOLEAN,"只要求填写草稿时可在核验后直接结束。",required=false),
+        )) { ToolCall.FillChat(it["recipient"] as String,it["text"] as String,it["mode"] as String? ?: "replace",it["finish_if_verified"] as Boolean? ?: false) },
         Spec("perform_steps","明确的安全步骤优先连续执行 1 到 4 步。下一页节点不必预知，每步会按语义重新找并核验；重名、失败或需确认立即停止。最后一步可自动核验并收尾，省去无意义的下一轮模型等待。发送和删除必须单独调用。",listOf(
             Field("steps",Kind.STEPS,"动作计划。目标使用文字、类型、可输入状态或资源 id，不能用旧节点或坐标。"),
             Field("finish_if_verified",Kind.BOOLEAN,"整个用户任务完成时设为 true；最后一步必须提供 expect_text，且须通过本地核验。",required=false),

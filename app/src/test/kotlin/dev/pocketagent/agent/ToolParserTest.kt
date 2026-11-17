@@ -152,9 +152,10 @@ class ToolParserTest {
     @Test
     fun definitionNamesMatchSpec() {
         val names = Tools.definitions.map { it.name }
-        assertEquals(38, names.size)
+        assertEquals(43, names.size)
         assertEquals(
             setOf(
+                "read_ui_source", "find_chat_input", "font_reference", "open_contact", "fill_chat",
                 "perform_steps", "zoom_screen", "read_screen", "read_element", "find_elements", "tap_mark", "wait_for", "checkpoint", "long_press", "double_tap", "drag",
                 "tap", "type", "scroll", "back", "home", "open_app", "tap_text",
                 "screenshot", "wait", "ask_user", "done",

@@ -87,4 +87,9 @@ interface DevicePort {
     suspend fun zoom(bounds: Bounds): Shot? = null
 
     suspend fun shot(): Shot? = screenshot()?.let { Shot(it, emptyList()) }
+
+    /** Runtime original text, not source-code decompilation or private app files. */
+    suspend fun readUiSource(): Screen = readScreen()
+
+    suspend fun fontReference(text: String): FontReference? = null
 }

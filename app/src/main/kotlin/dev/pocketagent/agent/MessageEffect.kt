@@ -37,6 +37,15 @@ internal class MessageEffect private constructor(
             return MessageEffect(screen.packageName, body, input?.viewId, input?.bounds, messages(screen, body), errors(screen))
         }
 
+        fun preview(screen:Screen,target:ScreenNode?,lastTyped:String?):String? {
+            if(!isSend(target))return null
+            val drafts=screen.all().filter { it.editable && !it.isPassword && !it.text.isNullOrBlank() }.toList()
+            val visible=(drafts.filter { it.focused }.singleOrNull()
+                ?: drafts.filter { lastTyped!=null && it.text?.startsWith(lastTyped)==true }.singleOrNull()
+                ?: drafts.singleOrNull())?.text
+            return visible ?: lastTyped?.takeIf { it.isNotBlank() && screen.all().none { n->n.editable && !n.isPassword } }
+        }
+
         fun submission(screen: Screen, field: ScreenNode, body: String): MessageEffect? {
             val nearbySend = screen.all().any { button ->
                 isSend(button) && kotlin.math.abs(button.bounds.top - field.bounds.top) <=
@@ -47,10 +56,11 @@ internal class MessageEffect private constructor(
         }
 
         private fun messages(screen: Screen, body: String): Int {
-            val text = TextTargets.normalized(body)
+            val text = body.replace("\r\n","\n").replace('\r','\n')
             if (text.isBlank()) return 0
+            val exact=Regex("^"+Regex.escape(text)+"(?:\\s+(?i:已发送|已送达|已读|sent|delivered|read))?$" )
             val matches = screen.all().filter { !it.editable && !it.isPassword &&
-                TextTargets.normalized(it.label().orEmpty()).contains(text) }.toList()
+                exact.matches((it.text?:it.description).orEmpty().replace("\r\n","\n").replace('\r','\n')) }.toList()
             // A container and its text child describe a single bubble.
             fun contains(n: ScreenNode, id: String): Boolean = n.children.any { it.id == id || contains(it, id) }
             return matches.count { n -> matches.none { it.id != n.id && contains(n, it.id) } }

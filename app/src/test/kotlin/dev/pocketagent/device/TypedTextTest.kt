@@ -11,8 +11,8 @@ class TypedTextTest {
     }
 
     @Test
-    fun ignoresCaseAndExtraSpaces() {
-        assertTrue(TypedText.matches("Blue Tokai Coffee", "  blue   tokai coffee "))
+    fun preservesCaseAndExtraSpaces() {
+        assertFalse(TypedText.matches("Blue Tokai Coffee", "  blue   tokai coffee "))
     }
 
     @Test
@@ -38,8 +38,9 @@ class TypedTextTest {
     }
 
     @Test
-    fun treatsOnlyWhitespaceAndCaseAsEquivalent() {
+    fun preservesLineBreaksAndNormalisesOnlyLineEndings() {
         assertFalse(TypedText.matches("12345", "1,2345"))
-        assertTrue(TypedText.matches("Line one\nline two", "line one line two"))
+        assertFalse(TypedText.matches("Line one\nline two", "line one line two"))
+        assertTrue(TypedText.matches("Line one\nline two", "Line one\r\nline two"))
     }
 }

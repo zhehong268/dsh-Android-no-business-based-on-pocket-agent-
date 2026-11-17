@@ -1,10 +1,13 @@
 package dev.pocketagent.android
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.app.KeyguardManager
 import android.app.SearchManager
 import android.content.ComponentName
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
@@ -45,6 +48,9 @@ import dev.pocketagent.device.Shortcut
 import dev.pocketagent.device.Settler
 import dev.pocketagent.device.SwipePath
 import dev.pocketagent.device.TypedText
+import dev.pocketagent.device.TextEntry
+import dev.pocketagent.device.TextEditor
+import dev.pocketagent.device.FontReference
 import dev.pocketagent.safety.BlockedApps
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -71,6 +77,7 @@ class AccessibilityDevice(
 ) : DevicePort {
     private val ownPackage: String = service.packageName
     private val reader = ScreenReader(service)
+    private val environment = VisualEnvironment(service)
     private val revalidator = Revalidator(ownPackage, tolerancePx = BOUNDS_TOLERANCE_PX)
     private val blockedApps = BlockedApps()
     private val appMatcher = AppMatcher(blockedApps)
@@ -86,6 +93,18 @@ class AccessibilityDevice(
         settler.settle()
         ensureUsable()
         return withOverlaysHidden { readAndKeep() }
+    }
+
+    override suspend fun readUiSource():Screen {
+        ensureUsable()
+        withContext(Dispatchers.Main) {
+            val info=service.serviceInfo
+            if(info!=null && info.flags and AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS==0) {
+                info.flags=info.flags or AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+                service.serviceInfo=info
+            }
+        }
+        return readScreen()
     }
 
     /**
@@ -133,6 +152,12 @@ class AccessibilityDevice(
      */
     override suspend fun shot(): Shot? = captureShot(null)
     override suspend fun zoom(bounds: Bounds): Shot? = captureShot(bounds)
+    override suspend fun fontReference(text:String):FontReference? = withContext(Dispatchers.Default) {
+        ensureUsable()
+        val screen=observation?.screen ?: return@withContext null
+        if(reader.currentNow().packageName!=screen.packageName || blockedApps.isBlocked(screen.packageName,null))return@withContext null
+        environment.fontReference(screen.packageName,text)
+    }
 
     private suspend fun captureShot(region: Bounds?): Shot? {
         ensureUsable()
@@ -151,6 +176,7 @@ class AccessibilityDevice(
                 sensitive.forEach { canvas.drawRect(it.left.toFloat(),it.top.toFloat(),it.right.toFloat(),it.bottom.toFloat(),paint) }
             }
             val hash = contentHash(bitmap,expected.root.bounds)
+            val visualContext = environment.background(bitmap,expected)
             if (region != null) {
                 val root=expected.root.bounds
                 if (region.left < maxOf(0,root.left) || region.top < maxOf(0,root.top) || region.right > minOf(bitmap.width,root.right) || region.bottom > minOf(bitmap.height,root.bottom) || region.right<=region.left || region.bottom<=region.top) {
@@ -159,8 +185,8 @@ class AccessibilityDevice(
                 val cropped=Bitmap.createBitmap(bitmap,region.left,region.top,region.right-region.left,region.bottom-region.top)
                 if(cropped !== bitmap) bitmap.recycle()
                 val visible=marks.filter { region.contains(it.x,it.y) }
-                encode(cropped,visible,region.left,region.top)?.let { Shot(it,visible,hash) }
-            } else encode(bitmap,marks)?.let { png -> Shot(png,marks,hash) }
+                encode(cropped,visible,region.left,region.top)?.let { Shot(it,visible,hash,visualContext) }
+            } else encode(bitmap,marks)?.let { png -> Shot(png,marks,hash,visualContext) }
         } }
     }
 
@@ -301,30 +327,64 @@ class AccessibilityDevice(
 
     private suspend fun typeText(node: ScreenNode, text: String, submit: Boolean, mode: String = "replace"): ActionResult {
         val live = validatedNode(node) ?: return SCREEN_CHANGED
-        // A second check behind the gate: password fields are never typed into.
-        if (node.isPassword || live.isPassword) return ActionResult.Failed("从不往密码框里输入内容")
-        // Focus may report false on a field that already has focus, so only setting the text decides.
-        val desired = when (mode) {
-            "clear" -> ""
-            "append" -> (if (live.isShowingHintText) "" else live.text?.toString().orEmpty()) + text
-            else -> text
+        if (node.isPassword || live.isPassword || TextEntry.isPasswordType(live.inputType)) return ActionResult.Failed("从不往密码框里输入内容")
+        val clipboard=service.getSystemService(ClipboardManager::class.java)
+        val previous=try { clipboard?.primaryClip } catch(_:RuntimeException) { null }
+        var clipLabel:String?=null
+        val editor=object:TextEditor {
+            override fun value():String? { live.refresh();return if(live.isShowingHintText)"" else live.text?.toString().orEmpty() }
+            override fun sameTarget():Boolean {
+                if(!live.refresh() || !live.isEnabled || live.isPassword || TextEntry.isPasswordType(live.inputType))return false
+                val window=reader.currentNow()
+                return window.id==live.windowId && window.packageName==node.packageName && live.packageName?.toString()==node.packageName
+            }
+            override fun focus()=live.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            override fun selectAll(length:Int)=live.isFocused && live.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION,Bundle().apply {
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT,0);putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT,length)
+            })
+            override fun paste(text:String):Boolean {
+                if(!live.isFocused || clipboard==null)return false
+                val label="dsh-input-"+java.util.UUID.randomUUID().toString()
+                val clip=ClipData.newPlainText(label,text)
+                clip.description.extras=android.os.PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE",true) }
+                var dispatched=false
+                return try {
+                    clipboard.setPrimaryClip(clip);clipLabel=label;live.refresh()
+                    if(live.actionList.none { it.id==AccessibilityNodeInfo.ACTION_PASTE })false
+                    else { dispatched=true;live.performAction(AccessibilityNodeInfo.ACTION_PASTE);true }
+                } catch(_:RuntimeException) { dispatched }
+            }
+            override fun setText(text:String):Boolean {
+                if(live.actionList.none { it.id==AccessibilityNodeInfo.ACTION_SET_TEXT })return false
+                live.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,text)
+                })
+                return true
+            }
+            override fun commit(text:String,previousLength:Int):Boolean {
+                if(Build.VERSION.SDK_INT<33 || !live.isFocused || !sameTarget())return false
+                val method=service.inputMethod ?: return false
+                val info=method.currentInputEditorInfo ?: return false
+                if(info.packageName!=node.packageName || TextEntry.isPasswordType(info.inputType))return false
+                val input=method.currentInputConnection ?: return false
+                input.setSelection(0,previousLength)
+                input.commitText(text,1,null)
+                return true
+            }
         }
-        live.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-        val args = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, desired)
-        }
-        if (!live.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return ActionResult.Failed("这里输不进去")
-        // "Set text" can report success while the app ignores it, so read the field again and check.
-        delay(TYPE_SETTLE_MS)
-        live.refresh()
-        val actual = if (live.isShowingHintText) null else live.text
-        return if (TypedText.matches(desired, actual)) {
-            if (submit) pressEnter(live) else ActionResult.Ok
-        } else {
-            ActionResult.Failed(
-                "输入框没有接收这段文字。如果里面本来就有别的字，先用它自己的清空按钮清掉，" +
-                    "或者换一个输入框试试",
-            )
+        var verified=false
+        try {
+            val result=TextEntry.enter(editor,text,mode) { delay(80) }
+            verified=result is ActionResult.Ok
+            return if(result is ActionResult.Ok && submit)pressEnter(live) else result
+        } finally {
+            // An unverified late paste must not consume the user's previous clipboard contents.
+            // Restore only after verified input, and never overwrite a user copy made during the action.
+            if(verified && clipLabel!=null)try {
+                if(clipboard?.primaryClipDescription?.label?.toString()==clipLabel) {
+                    if(previous!=null)clipboard.setPrimaryClip(previous) else clipboard.clearPrimaryClip()
+                }
+            } catch(_:RuntimeException) { }
         }
     }
 
