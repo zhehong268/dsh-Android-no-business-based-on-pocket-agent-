@@ -16,5 +16,8 @@ interface AgentUi {
 
     fun onCaption(caption: String)
 
+    /** Brief, user-facing plan; never provider reasoning tokens. */
+    fun onPlan(goal: String, next: String) {}
+
     fun onWaitingForUser(waiting: Boolean)
 }

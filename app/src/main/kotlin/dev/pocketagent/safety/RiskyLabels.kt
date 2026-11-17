@@ -54,6 +54,12 @@ object RiskyLabels {
         "拨号", "拨打", "呼叫", "打电话",
     )
     private val pattern = wordStartPattern(terms + localTerms)
+    private val unlabelledContext = wordStartPattern(listOf(
+        "pay", "buy", "place order", "delete", "remove", "transfer", "uninstall", "install", "call", "dial",
+        "支付", "付款", "购买", "下单", "转账", "汇款", "提现", "充值", "删除", "移除", "清空", "注销", "卸载", "安装", "拨打", "呼叫",
+    ))
 
     fun isRisky(label: String?): Boolean = !label.isNullOrBlank() && pattern.find(label)
+
+    fun requiresCautionForUnlabelled(label: String?): Boolean = !label.isNullOrBlank() && unlabelledContext.find(label)
 }

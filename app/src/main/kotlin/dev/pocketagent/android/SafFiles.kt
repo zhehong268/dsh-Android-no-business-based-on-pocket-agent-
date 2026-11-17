@@ -18,6 +18,13 @@ import java.io.IOException
  * The grant itself is the permission: the app never asks Android for broad storage access.
  */
 class SafFiles(private val context: Context, private val store: SharedPreferences) : FilePort {
+    init {
+        val roots = store.getStringSet(KEY, emptySet()).orEmpty()
+        context.contentResolver.persistedUriPermissions.filter { it.isWritePermission && it.uri.toString() in roots }
+            .forEach { permission -> runCatching {
+                context.contentResolver.releasePersistableUriPermission(permission.uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            } }
+    }
     /** A granted folder: the name shown to the user and the model, and the tree it stands for. */
     data class Folder(val name: String, val uri: String)
 
@@ -35,7 +42,7 @@ class SafFiles(private val context: Context, private val store: SharedPreference
 
     /** Remembers a folder the picker returned. False when the grant could not be kept. */
     fun add(uri: Uri): Boolean {
-        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
         val kept = try {
             context.contentResolver.takePersistableUriPermission(uri, flags)
             true
@@ -58,6 +65,10 @@ class SafFiles(private val context: Context, private val store: SharedPreference
     }
 
     override fun list(path: String): FileResult = guarded {
+        if (path.trim() == "/") {
+            val names = folders().map { it.name }
+            return@guarded FileResult.Ok(if (names.isEmpty()) "还没有授权任何文件夹。" else "已授权的只读目录：\n" + names.joinToString("\n") { "$it/" })
+        }
         val target = resolve(path, mustExist = true)
         if (!target.isDir) throw FileError("「${target.label}」不是一个文件夹。")
         val children = children(target.folder, target.docId)
@@ -73,7 +84,18 @@ class SafFiles(private val context: Context, private val store: SharedPreference
         if (target.isDir) throw FileError("「${target.label}」是文件夹，不是文件。")
         val docUri = target.uri ?: throw FileError("读不到「${target.label}」，可能是文件已被移动。")
         val bytes = try {
-            context.contentResolver.openInputStream(docUri).use { it?.readBytes() }
+            context.contentResolver.openInputStream(docUri).use { input ->
+                input?.let {
+                    val out = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    while (out.size() <= MAX_BYTES) {
+                        val count = input.read(buffer, 0, minOf(buffer.size, MAX_BYTES + 1 - out.size()))
+                        if (count < 0) break
+                        out.write(buffer, 0, count)
+                    }
+                    out.toByteArray()
+                }
+            }
         } catch (e: IOException) {
             null
         } ?: throw FileError("读不到「${target.label}」，可能是文件已被移动或没有读权限。")
@@ -86,33 +108,8 @@ class SafFiles(private val context: Context, private val store: SharedPreference
         FileResult.Ok("「${target.label}」的内容：\n$body")
     }
 
-    override fun write(path: String, text: String): FileResult = guarded {
-        val target = resolve(path, mustExist = false)
-        if (target.isDir) throw FileError("「${target.label}」是文件夹，不能当成文件写。")
-        val existing = target.uri
-        val uri: Uri = existing ?: run {
-            val parent = target.parentUri ?: throw FileError("找不到「${target.label}」所在的文件夹。")
-            try {
-                DocumentsContract.createDocument(context.contentResolver, parent, MIME_TEXT, target.name)
-            } catch (e: IOException) {
-                null
-            } catch (e: SecurityException) {
-                null
-            } ?: throw FileError("在这个文件夹里新建不了「${target.name}」，可能没有写权限。")
-        }
-        val wrote = try {
-            context.contentResolver.openOutputStream(uri, "wt").use { out ->
-                out?.write(text.toByteArray(Charsets.UTF_8))
-                out != null
-            }
-        } catch (e: IOException) {
-            false
-        } catch (e: SecurityException) {
-            false
-        }
-        if (!wrote) throw FileError("写不进「${target.label}」，可能没有写权限。")
-        FileResult.Ok("已把 ${text.length} 个字写入「${target.label}」。")
-    }
+    override fun write(path: String, text: String): FileResult =
+        FileResult.Failed("文件功能为只读，不能创建、覆盖或删除文件。")
 
     // --- resolution ---
 

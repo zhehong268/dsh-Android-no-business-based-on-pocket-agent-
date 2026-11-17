@@ -68,6 +68,7 @@ class AgentRunner(
         override suspend fun confirm(request: ConfirmRequest) = ui.confirm(request)
         override suspend fun ask(question: String) = ui.ask(question)
         override fun onCaption(caption: String) = ui.onCaption(caption)
+        override fun onPlan(goal: String, next: String) = ui.onPlan(goal, next)
         override fun onWaitingForUser(waiting: Boolean) {
             setIfCurrent(token, if (waiting) AgentState.WaitingForUser else AgentState.Running)
             ui.onWaitingForUser(waiting)

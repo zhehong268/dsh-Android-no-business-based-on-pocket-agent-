@@ -95,7 +95,7 @@ class AgentSession(
 
     private val settler = Settler(now = SystemClock::uptimeMillis)
     private val logic = BubbleLogic()
-    private val caption = CaptionView(service)
+    private val caption = CaptionView(service) { stopRunningTask() }
     private val confirmCard = ConfirmCard(service)
     private val summaryCard = SummaryCard(service)
     private val overlayUi = OverlayUi(confirmCard, caption, ::openAnswerScreen)
@@ -179,6 +179,7 @@ class AgentSession(
         override suspend fun confirm(request: ConfirmRequest): Boolean = target().confirm(request)
         override suspend fun ask(question: String): String? = target().ask(question)
         override fun onCaption(caption: String) = onMainWhileLive { target().onCaption(caption) }
+        override fun onPlan(goal: String, next: String) = onMainWhileLive { target().onPlan(goal, next) }
         override fun onWaitingForUser(waiting: Boolean) = onMainWhileLive { target().onWaitingForUser(waiting) }
     }
 
@@ -436,6 +437,7 @@ class AgentSession(
         if (closed) return
         logic.onState(state)
         val live = state is AgentState.Running || state is AgentState.WaitingForUser
+        caption.setRunning(live)
         service.subscribeToTaskEvents(live)
         when (state) {
             is AgentState.Finished -> {
@@ -478,7 +480,18 @@ class AgentSession(
         overlayUi.closeAll()
         TaskInputActivity.closeAnswerScreen()
         device.dropHandles()
-        summaryCard.show(title, withSpeechNote(body))
+        summaryCard.close()
+        Toast.makeText(service, title + "。" + withSpeechNote(body).take(120), Toast.LENGTH_LONG).show()
+    }
+
+    private fun stopRunningTask() {
+        if (!taskIsLive()) return
+        // Cancel both a pending model request and any confirmation/answer wait.
+        directControl?.close("用户在手机上停止了控制。")
+        directControl = null
+        runner.cancel()
+        stopVoice()
+        overlayUi.closeAll()
     }
 
     /** Adds the unavailable-speech note to [body] the first time a voice task had to run silently. */

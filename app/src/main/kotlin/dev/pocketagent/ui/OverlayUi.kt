@@ -64,7 +64,11 @@ class OverlayUi(
     }
 
     override fun onWaitingForUser(waiting: Boolean) {
-        onMain { caption.setVisible(!waiting) }
+        onMain { caption.setWaiting(waiting) }
+    }
+
+    override fun onPlan(goal: String, next: String) {
+        onMain { caption.setPlan(goal, next) }
     }
 
     /** Called by the task screen through the session. */
@@ -78,7 +82,7 @@ class OverlayUi(
             pendingConfirm?.takeIf { it.isActive }?.resume(false)
             pendingConfirm = null
             confirmCard.close()
-            caption.setText(null)
+            caption.setRunning(false)
             caption.setVisible(true)
             pendingAnswer?.complete(null)
             pendingAnswer = null

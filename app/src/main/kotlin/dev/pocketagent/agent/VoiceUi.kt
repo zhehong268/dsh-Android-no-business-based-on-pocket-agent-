@@ -97,6 +97,8 @@ class VoiceUi(
         }
     }
 
+    override fun onPlan(goal: String, next: String) = wrapped.onPlan(goal, next)
+
     override fun onCaption(caption: String) {
         wrapped.onCaption(caption)
         if (exchanges.get() == 0) speaker.sayLatest(SpokenText.caption(caption))

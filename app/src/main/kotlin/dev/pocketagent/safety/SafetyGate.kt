@@ -72,26 +72,24 @@ class SafetyGate(private val blocked: BlockedApps, private val ownPackage: Strin
 
     private fun checkTapAt(x: Int, y: Int, screen: Screen, irreversible: Boolean): Verdict {
         if (screen.ownWindowBounds.any { it.contains(x, y) }) return OWN_WINDOW
-        if (screen.all().none { it.label() != null }) {
-            return Verdict.Confirm("这个界面没有可读的文字标签，没法核对这次点击")
-        }
         // Judge every element under the point, not only one of them: overlapping windows decide which element
         // really receives the touch, and a screen's tree order does not tell us that.
-        screen.all().filter { it.bounds.contains(x, y) }.firstNotNullOfOrNull { riskyOnPath(it, screen) }
+        screen.all().filter { it.bounds.contains(x, y) && (it.clickable || it.children.isEmpty()) }
+            .firstNotNullOfOrNull { riskyOnPath(it, screen) }
             ?.let { return Verdict.Confirm("「$it」看起来会付款、发送或删除") }
         val target = screen.deepestAt(x, y)
         if (target != null) {
             val verdict = checkTap(target, screen, irreversible)
-            val blindTap = target.label() == null && screen.all().any { RiskyLabels.isRisky(it.label()) }
+            val blindTap = target.label() == null && screen.hasSensitiveContext()
             return if (verdict == Verdict.Allow && blindTap) {
-                Verdict.Confirm("界面上有高风险按钮时，点了一个没有标签的元素")
+                Verdict.Confirm("付款或删除等界面上的无标签操作需要核对")
             } else {
                 verdict
             }
         }
         return when {
             irreversible -> Verdict.Confirm("助手把这一步标记为不可撤销")
-            screen.all().any { RiskyLabels.isRisky(it.label()) } -> Verdict.Confirm("界面上有高风险按钮，而这次点击不在已知元素上")
+            screen.hasSensitiveContext() -> Verdict.Confirm("付款或删除等界面上的未知位置需要核对")
             else -> Verdict.Allow
         }
     }
@@ -99,6 +97,7 @@ class SafetyGate(private val blocked: BlockedApps, private val ownPackage: Strin
     private fun checkTap(node: ScreenNode, screen: Screen, irreversible: Boolean): Verdict {
         if (node.packageName == ownPackage) return OWN_WINDOW
         if (irreversible) return Verdict.Confirm("助手把这一步标记为不可撤销")
+        if (node.editable) return Verdict.Allow
         riskyLabelNear(node, screen)?.let { return Verdict.Confirm("「$it」看起来会付款、发送或删除") }
         if ((sequenceOf(node) + descendants(node)).any { isGenericAffirmative(it) } && screen.showsMoney()) {
             return Verdict.Confirm("在显示金额的界面上点了通用的确认按钮")
@@ -109,11 +108,16 @@ class SafetyGate(private val blocked: BlockedApps, private val ownPackage: Strin
     /** The risky label on the node, any descendant, or the nearest labelled ancestor, or null if none is risky. */
     private fun riskyLabelNear(node: ScreenNode, screen: Screen): String? {
         val inside = sequenceOf(node) + descendants(node)
-        inside.mapNotNull { it.label() }.firstOrNull { RiskyLabels.isRisky(it) }?.let { return it }
+        // A labelled control is judged by its own label. Searching its entire container caused
+        // a chat's Send button to make unrelated navigation and input require approval.
+        val own = node.label()
+        own?.takeIf { riskyTarget(it, screen) }?.let { return it }
+        if (own != null && node.role != "button") return null
+        inside.filter { !it.editable }.mapNotNull { it.label() }.firstOrNull { riskyTarget(it, screen) }?.let { return it }
         var ancestor = screen.parentOf(node)
         while (ancestor != null) {
             val label = ancestor.label()
-            if (label != null) return label.takeIf { RiskyLabels.isRisky(it) }
+            if (label != null) return label.takeIf { riskyTarget(it, screen) }
             ancestor = screen.parentOf(ancestor)
         }
         return null
@@ -121,11 +125,12 @@ class SafetyGate(private val blocked: BlockedApps, private val ownPackage: Strin
 
     /** The risky label on the node itself or on its nearest labelled ancestor, or null. */
     private fun riskyOnPath(node: ScreenNode, screen: Screen): String? {
-        node.label()?.takeIf { RiskyLabels.isRisky(it) }?.let { return it }
+        if (node.editable) return null
+        node.label()?.let { return it.takeIf { label -> riskyTarget(label, screen) } }
         var ancestor = screen.parentOf(node)
         while (ancestor != null) {
             val label = ancestor.label()
-            if (label != null) return label.takeIf { RiskyLabels.isRisky(it) }
+            if (label != null) return label.takeIf { riskyTarget(it, screen) }
             ancestor = screen.parentOf(ancestor)
         }
         return null
@@ -134,12 +139,22 @@ class SafetyGate(private val blocked: BlockedApps, private val ownPackage: Strin
     private fun descendants(node: ScreenNode): Sequence<ScreenNode> =
         node.children.asSequence().flatMap { sequenceOf(it) + descendants(it) }
 
+    private fun riskyTarget(label: String, screen: Screen): Boolean {
+        if (!RiskyLabels.isRisky(label)) return false
+        if (matchForm(label).lowercase(Locale.ROOT) !in setOf("confirm", "确定", "确认")) return true
+        return screen.showsMoney() || screen.all().mapNotNull { it.label() }
+            .any { it != label && RiskyLabels.isRisky(it) }
+    }
+
     private fun isGenericAffirmative(node: ScreenNode): Boolean =
         node.label()?.let { matchForm(it).lowercase(Locale.ROOT) } in AFFIRMATIVES
 
     private fun Screen.showsMoney(): Boolean = all().mapNotNull { it.label() }.any { label ->
         matchForm(label).any { it in CURRENCY_SYMBOLS } || MONEY_WORDS.find(label) || MONEY_WORDS_ZH.find(label)
     }
+
+    private fun Screen.hasSensitiveContext(): Boolean = showsMoney() ||
+        all().any { RiskyLabels.requiresCautionForUnlabelled(it.label()) }
 
     private companion object {
         val OWN_WINDOW = Verdict.Block("dsh 自己的界面不在操作范围内")

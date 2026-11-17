@@ -50,7 +50,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -105,25 +104,27 @@ class AccessibilityDevice(
 
     override suspend fun perform(action: DeviceAction): ActionResult {
         ensureUsable()
-        return withContext(Dispatchers.Default) {
-            when (action) {
-                is DeviceAction.LongPress -> pressNode(action.node, false)
-                is DeviceAction.DoubleTap -> pressNode(action.node, true)
-                is DeviceAction.Drag -> drag(action)
-                is DeviceAction.Tap -> tap(action.node)
-                is DeviceAction.TapAt -> tapAt(action.x, action.y)
-                is DeviceAction.TypeText -> typeText(action.node, action.text, action.submit, action.mode)
-                is DeviceAction.Scroll -> scroll(action.direction, action.node)
-                DeviceAction.Back -> global(AccessibilityService.GLOBAL_ACTION_BACK, "没能返回")
-                DeviceAction.Home -> global(AccessibilityService.GLOBAL_ACTION_HOME, "没能回到桌面")
-                is DeviceAction.OpenApp -> openApp(action.name)
-                is DeviceAction.OpenShortcut -> openShortcut(action.shortcut)
-                // Replies go through NotificationPort, never the screen.
-                is DeviceAction.ReplyToNotification -> ActionResult.Failed("这不是屏幕操作")
+        return withOverlaysHidden {
+            delay(60) // Wait for the panel surface and input region to disappear.
+            withContext(Dispatchers.Default) {
+                when (action) {
+                    is DeviceAction.LongPress -> pressNode(action.node, false)
+                    is DeviceAction.DoubleTap -> pressNode(action.node, true)
+                    is DeviceAction.Drag -> drag(action)
+                    is DeviceAction.Tap -> tap(action.node)
+                    is DeviceAction.TapAt -> tapAt(action.x, action.y)
+                    is DeviceAction.TypeText -> typeText(action.node, action.text, action.submit, action.mode)
+                    is DeviceAction.Scroll -> scroll(action.direction, action.node)
+                    DeviceAction.Back -> global(AccessibilityService.GLOBAL_ACTION_BACK, "没能返回")
+                    DeviceAction.Home -> global(AccessibilityService.GLOBAL_ACTION_HOME, "没能回到桌面")
+                    is DeviceAction.OpenApp -> openApp(action.name)
+                    is DeviceAction.OpenShortcut -> openShortcut(action.shortcut)
+                    // Replies go through NotificationPort, never the screen.
+                    is DeviceAction.ReplyToNotification -> ActionResult.Failed("这不是屏幕操作")
+                }
             }
         }
     }
-
     override suspend fun screenshot(): ByteArray? = shot()?.png
 
     /**
@@ -183,7 +184,8 @@ class AccessibilityDevice(
         return screen.all()
             .filter { !it.isPassword && it.packageName != service.packageName && (it.clickable || !it.label().isNullOrBlank()) }
             .filter { it.bounds.right - it.bounds.left > 8 && it.bounds.bottom - it.bounds.top > 8 }
-            .sortedWith(compareBy({ it.bounds.top }, { it.bounds.left }))
+            .distinctBy { it.bounds }
+            .sortedWith(compareBy({ if (it.editable) 0 else if (it.clickable) 1 else 2 }, { it.bounds.top }, { it.bounds.left }))
             .take(MarkLegend.MAX_MARKS)
             .toList()
             .mapIndexed { i, node ->
@@ -282,8 +284,8 @@ class AccessibilityDevice(
 
     private suspend fun tap(node: ScreenNode): ActionResult {
         val live = validatedNode(node) ?: return SCREEN_CHANGED
-        val clickable = generateSequence(live) { it.parent }.take(MAX_ANCESTORS).firstOrNull { it.isClickable }
-        if (clickable != null && clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return ActionResult.Ok
+        // One physical touch. Some WebViews accept ACTION_CLICK without dispatching a DOM click;
+        // falling back afterwards can instead send twice if the first click was merely delayed.
         val bounds = boundsOf(live)
         val point = planner().tapPoint(bounds)
         // The planner falls back to the middle of the screen when the node lies wholly in the edge area;
@@ -516,22 +518,19 @@ class AccessibilityDevice(
         return dispatch(description)
     }
 
-    private suspend fun dispatch(description: GestureDescription): ActionResult = withOverlaysHidden {
-            suspendCancellableCoroutine { cont ->
-                val callback = object : AccessibilityService.GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription?) {
-                        if (cont.isActive) cont.resume(ActionResult.Ok)
-                    }
-
-                    override fun onCancelled(gestureDescription: GestureDescription?) {
-                        if (cont.isActive) cont.resume(GESTURE_INTERRUPTED)
-                    }
-                }
-                if (!service.dispatchGesture(description, callback, null) && cont.isActive) {
-                    cont.resume(ActionResult.Failed("手势没能发出去"))
-                }
+    private suspend fun dispatch(description: GestureDescription): ActionResult = suspendCancellableCoroutine { cont ->
+        val callback = object : AccessibilityService.GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                if (cont.isActive) cont.resume(ActionResult.Ok)
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                if (cont.isActive) cont.resume(GESTURE_INTERRUPTED)
             }
         }
+        if (!service.dispatchGesture(description, callback, null) && cont.isActive) {
+            cont.resume(ActionResult.Failed("手势没能发出去"))
+        }
+    }
 
     // --- Screenshots ---
 

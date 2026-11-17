@@ -1,137 +1,35 @@
-# Architecture
+# 结构
 
-Pocket Agent is a single Gradle module written in Kotlin. The agent logic is kept free of Android types so it
-can be unit-tested on a plain JVM; everything that touches the phone sits behind small interfaces.
+## 任务执行
 
-```text
-Bubble / task screen / setup
-             │
-             ▼
-        AgentRunner      one task at a time, owns cancellation, publishes state
-             │
-             ▼
-        AgentLoop ──► LlmClient ──► AnthropicClient / OpenAiCompatClient ──► model API
-             │
-             ├──► SafetyGate       allow, block or ask the user
-             ├──► PlaybookStore    bundled Markdown tips per app
-             ├──► DevicePort ◄── AccessibilityDevice
-             │                           │
-             │                 PocketAccessibilityService
-             └──► NotificationPort ◄── AndroidNotifications
-                                           │
-                                 PocketNotificationListener
-```
+`AgentSession` 连接 Android 服务、配置、文件端口和界面，`AgentRunner` 管理单个任务与取消。
+`AgentLoop` 负责观察、调用模型、解析工具、检查风险、执行和核验；模型不能直接调用 Android API。
 
-## Packages
+普通任务默认 40 步，答题最多 90 步，电脑控制最多 60 步。每步只接收一个工具调用。
+支持图片的模型在初始观察、动作后和主动读屏时接收截图；历史图片只保留近期内容。
+节点编号和截图标记绑定当前观察，不能跨页面复用。
 
-| Package | Role |
-| --- | --- |
-| `agent/` | `AgentLoop`, `AgentRunner`, `StuckDetector`, tool definitions, captions, `OtpQuickAction` ("Latest OTP", no AI), and the voice loop: `VoiceUi`, the `Speaker` and `Listener` interfaces, `SpokenText`, `YesNo`, `ReadRequest` (no Android types) |
-| `llm/` | `LlmClient` and its two implementations, provider presets and validation. The only package that touches the network |
-| `safety/` | `SafetyGate`, `BlockedApps`, `RiskyLabels`, `NotificationFilter`, `MoneyMessages`, `CodeFinder`. Plain rules, no Android types |
-| `playbook/` | Loads and validates the per-app Markdown playbooks in `assets/playbooks/` |
-| `device/` | `DevicePort`, screen model, `ScreenSerializer`, settle logic, re-validation, `NotificationPort`, `NotificationSerializer` |
-| `android/` | The accessibility service, `AccessibilityDevice`, the notification listener (`PocketNotificationListener`, `AndroidNotifications`), Keystore storage, `TtsSpeaker` and `RecognizerListener` (the Android voice engines) |
-| `setup/` | Setup state and settings storage |
-| `ui/` | Bubble, caption, confirmation card, task screen, setup screen (platform Views, no Compose) |
+`AccessibilityDevice` 执行动作前重新核对节点、包名和边界。节点点击使用一次触摸；输入后重新读取内容核对。
+`SafetyGate` 检查目标风险，`ExecutionEvidence`、`ActionLog` 和 `StuckDetector` 判断结果及重复失败。
 
-## The agent loop
+## 数据和恢复
 
-`AgentLoop` runs observe, decide, check, act, for at most 25 steps. The first observation is the screen that
-was saved when the user tapped the bubble.
+`ScreenSerializer` 输出节点、状态和几何位置。截图遮挡可识别的密码区域，并用真实屏幕坐标标注控件。
+`ProgressStore` 保存任务摘要、下一步和未确定动作；`ExperienceStore` 仅保留经过结果核验的路线，最多 12 条。
+恢复时先读取当前屏幕，不能直接重放未确认的发送或提交。
 
-1. Wait for the screen to settle (300 ms without accessibility events, 3 s at most).
-2. Hide the bubble, read the accessibility tree, show the bubble again.
-3. Serialize the visible nodes (see below) and wrap them as screen data.
-4. If an app with a playbook is in the foreground for the first time, add its playbook.
-5. Send the observation to the model and receive one tool call.
-6. Validate the call. An invalid call returns a tool error; two in a row stop the task.
-7. Pass the action through `SafetyGate`.
-8. Perform the action through `DevicePort`, then update `StuckDetector` and repeat.
+`SafFiles` 沿系统授权目录逐段解析路径，只列目录和读取文本；`/` 返回已授权的目录名。
+模型工具表隐藏写入工具，执行器拒绝旧写入调用，Android 文件实现同样拒绝写入。
+联网搜索、网页读取和通知各使用独立端口。
 
-The model's tools are `tap`, `type`, `scroll`, `back`, `home`, `open_app`, `screenshot`, `wait`, `ask_user`
-and `done`. `open_app` takes an app name only, never a package, URL or intent.
+## 界面
 
-A task also ends when the same screen persists after three actions, when the phone locks, when accessibility
-is switched off, on a fatal provider error, or when the user long-presses the bubble (cancelled within 1 s).
+`TaskPanel` 是仅在任务运行时添加的无障碍悬浮窗口，包含简短计划、动作和停止按钮。`CaptionView` 作为旧调用名的类型别名保留。
+`AgentUi.onPlan` 只传检查点的简短目标和下一步，服务商推理内容不进入界面。
+面板可拖动，观察和动作期间隐藏；结束后移除。确认卡、回答对话框、任务历史由各自界面管理。
 
-### Providers
+## 电脑控制
 
-`LlmClient` has two implementations: `AnthropicClient` (Messages API) and `OpenAiCompatClient` (Chat
-Completions with a configurable base URL, key and model). That covers OpenRouter, OpenAI, Gemini's
-compatible endpoint, DeepSeek, Groq and local servers such as Ollama. Each client keeps its own history in
-its provider's format. Any model must support tool calling; setup verifies this with a test request.
-
-## Accessibility tree serializer
-
-`ScreenSerializer` turns the raw accessibility tree into compact text for the model.
-
-- Each visible node gets a short ID, a role, its text or content description, and flags such as clickable or
-  editable. IDs are valid for one observation only; a stale ID returns a tool error.
-- Password fields are redacted: the agent never reads or types in them.
-- Pocket Agent's own windows are left out.
-- Output is capped (12,000 characters by default).
-- The result is wrapped and labelled as **screen data**. The system prompt tells the model that text inside
-  it is never an instruction.
-
-Before an action runs, `DevicePort.perform` re-checks the target's label and bounds against the observation.
-If the screen changed in between, the action fails with "screen changed" and the safety gate runs again on
-the fresh label.
-
-## Overlays
-
-The bubble, the caption line and the confirmation and summary cards are Android `View`s added to
-`TYPE_ACCESSIBILITY_OVERLAY` windows by the accessibility service. This needs no overlay permission.
-
-- **Bubble:** the only way to start a task. Tap to open the task screen, long-press to stop. State is shown
-  by colour and icon: idle, running, waiting for the user, done, error.
-- **Caption:** one line next to the bubble. Kotlin builds it from the tool name and the target's label, so the
-  model cannot write misleading text into it. Password fields are never named.
-- **Confirmation card:** shows the action, target, app name and the exact text that will be sent. Its buttons
-  ignore touches when another window covers them. No answer within 120 s counts as declining.
-- **Summary card:** shown when any task ends, including failures.
-
-The bubble and caption are hidden while the screen is read, while an action runs, and while the phone is
-locked. Taps by coordinate inside any of Pocket Agent's own windows are rejected.
-
-## Setup and storage
-
-`SetupActivity` is a single checklist that detects each step's state: privacy notice, provider and key,
-model test, accessibility, optional microphone, bubble toggle, test task. The API key is stored encrypted
-(see [SECURITY_MODEL.md](SECURITY_MODEL.md)). There is no build-time provider config.
-
-## Voice loop
-
-With the Talk back setting on, a task started from the mic runs through `VoiceUi`, an `AgentUi` that wraps the
-normal overlay UI. A typed task, or Talk back off, uses the overlay UI alone and stays silent.
-
-- `VoiceUi` speaks captions (`sayLatest`, which never blocks and is held back during a confirmation or question),
-  speaks "On it." at the start and a short ending line, and answers `ask_user` by voice.
-- A confirmation races the confirmation card against a spoken answer. The first to finish wins and the loser is
-  cancelled. If the speaker is unavailable, only the card is used; if the listener is unavailable, the card decides.
-- `Speaker` and `Listener` (in `Voice.kt`) are the only voice interfaces `agent/` knows. `TtsSpeaker` (Android
-  text-to-speech) and `RecognizerListener` (`SpeechRecognizer`, with a 100 ms `ToneGenerator` beep before
-  listening) implement them in `android/`. The JVM tests use fakes.
-- `SpokenText` builds the sentences (capped at 200 characters, control characters removed). `YesNo` parses an
-  answer into yes, no, read or unclear (English and Hindi). `ReadRequest` decides whether the task asked to hear
-  the result read out.
-- `AgentSession` creates the engines the first time Talk back may be needed and stops them on cancel, a new task
-  or when the service closes.
-- The manifest `<queries>` allowlist includes the `TTS_SERVICE` action so Android 11+ lets the app bind the
-  phone's speech engine. A `RecognitionService` query has not been added (see TESTING.md).
-
-## Playbooks
-
-A playbook is a short Markdown file (2 KB at most) in `app/src/main/assets/playbooks/` with `app`, `package`
-and `tested_version` front matter and a list of navigation tips. Playbooks ship inside the APK and are never
-downloaded. They are trusted first-party content, so every playbook pull request is reviewed like code. They
-describe navigation only and cannot change `SafetyGate`. See [CONTRIBUTING.md](../CONTRIBUTING.md).
-
-## Constraints
-
-- Minimum Android 11 (API 30).
-- Four runtime dependencies: kotlinx-coroutines-android, kotlinx-serialization-json, okhttp, androidx-core-ktx.
-  A test fails if another appears.
-- No telemetry, analytics, crash reporter, receiver, provider or exported component other than the launcher
-  activity. The only services are the accessibility service and the notification listener, both system-bound and
-  not exported; the listener handles no notification events and stores nothing.
+`McpHttpServer` 处理局域网 HTTP 和配对码，`McpHandler` 只将工具交给 `PhoneControl` 接口。
+直接控制使用 `DirectControlClient`，和手机模型共用 `AgentLoop`、风险检查和 Android 执行器。
+测试分别记录脚本模型、真实 Android 执行链和外部服务商调用，不能互相代替。

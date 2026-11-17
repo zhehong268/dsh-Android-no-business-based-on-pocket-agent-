@@ -625,7 +625,7 @@ object Screens {
             )
         }
         p.addView(Kit.group(c, fileRows, 16), Kit.lp())
-        p.addView(Kit.footnote(c, "只有这里列出的文件夹能被读写；每次读写前都会先问你。"))
+        p.addView(Kit.footnote(c, "仅能读取这里列出的文件夹，不会创建、修改或删除文件。授权后的读取不再逐次确认。"))
         p.addView(gap(c, 26))
 
         p.addView(Kit.section(c, "语音"))

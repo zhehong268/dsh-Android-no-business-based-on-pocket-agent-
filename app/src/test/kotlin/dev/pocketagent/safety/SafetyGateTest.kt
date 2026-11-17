@@ -154,9 +154,10 @@ class SafetyGateTest {
     }
 
     @Test
-    fun coordinateTapOnScreenWithNoLabelsNeedsConfirmation() {
+    fun coordinateTapWithoutLabelsIsAllowedUnlessMarkedIrreversible() {
         val unreadable = screenOf(node("a1", role = "group", clickable = true, bounds = payBounds))
-        assertIs<Verdict.Confirm>(tapAt(unreadable, 150, 150))
+        assertEquals(Verdict.Allow, tapAt(unreadable, 150, 150))
+        assertIs<Verdict.Confirm>(tapAt(unreadable, 150, 150, irreversible = true))
     }
 
     @Test

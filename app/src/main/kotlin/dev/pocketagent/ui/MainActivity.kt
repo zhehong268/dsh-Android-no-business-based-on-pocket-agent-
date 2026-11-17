@@ -404,7 +404,6 @@ class MainActivity : ThemedActivity() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
             .addFlags(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
             )
         try {
@@ -421,7 +420,7 @@ class MainActivity : ThemedActivity() {
         if (requestCode != PICK_FOLDER || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         if (files.add(uri)) {
-            Toast.makeText(this, "已允许 dsh 读写这个文件夹。", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "已允许 dsh 读取这个文件夹。", Toast.LENGTH_SHORT).show()
             shell.refresh()
         } else {
             Toast.makeText(this, "没能取得这个文件夹的长期权限，请再选一次。", Toast.LENGTH_LONG).show()
