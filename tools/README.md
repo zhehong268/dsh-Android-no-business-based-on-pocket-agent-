@@ -1,14 +1,21 @@
-# 设备回归脚本
+# 设备回归
 
-`device-smoke.mjs` 只允许模拟器；测试页完全本地，不登录账号、不发送消息。
-需要预先完成浏览器首启，并启用可用的无障碍服务环境。
-
-环境变量：ADB 指定 adb 路径；DSH_TEST_SERIAL 指定独立模拟器；DSH_TEST_APK 指定测试 APK；DSH_TEST_OUT 指定结果目录。
-默认不自动确认，运行后按手机卡片批准。`DSH_SMOKE_APPROVE=1` 仅适用于本轮已核对的 1080×2400 测试 AVD；其他尺寸不要启用。
-脚本通过 adb reverse 提供本地页面；临时开启的电脑连接和配对码在 finally 中清理。
+`device-smoke.mjs` 在独立模拟器里安装 APK，打开本地测试页，再通过 MCP 操作。
+需要 Node.js 18+、adb，以及已经完成浏览器首启的模拟器。不要在日常使用的模拟器上运行。
 
 ```powershell
-$env:ADB='D:\Android\Sdk\platform-tools\adb.exe'
+$env:ADB='D:AndroidSdkplatform-toolsadb.exe'
 $env:DSH_TEST_SERIAL='emulator-5556'
 node tools/device-smoke.mjs
 ```
+
+| 环境变量 | 用途 |
+| --- | --- |
+| `ADB` | adb 路径，默认使用 PATH |
+| `DSH_TEST_SERIAL` | 独立模拟器编号，默认 `emulator-5556` |
+| `DSH_TEST_APK` | APK 路径，默认使用 Debug 构建产物 |
+| `DSH_TEST_OUT` | 结果目录，默认 `build/device-smoke` |
+| `DSH_SMOKE_APPROVE` | 设为 `1` 时自动点击测试确认卡片 |
+
+默认需要手动批准手机上的控制申请。自动点击的坐标只适用于已核对的 1080×2400 AVD，其他尺寸不要启用。
+脚本会临时开启电脑连接，通过 adb reverse 提供测试页，结束后关闭连接并清理配对码和端口映射。

@@ -1,18 +1,21 @@
-# 0.3.0 — 2026-11-17
+# 更新记录
 
-- 加强模型能力匹配、富状态观察、自动补图与放大截图。
-- 新增精确/重名定位、长按双击拖动、等待结果、检查点恢复和经过核验的操作经验。
-- 新增经手机批准的 MCP 直接控制，保留原安全门与确认。
-- 修正过期编号、重复空点、未知状态误报、推理回放和连接重启问题。
-- 单测 938 项（0 失败、1 跳过），独立模拟器 15 项设备回归通过；完整记录见 docs/VALIDATION-2026-11-16.md。
+## [0.3.0] - 2026-11-17
 
-# Changelog
+### 新增
 
-All notable changes to Pocket Agent are documented in this file.
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+- 区域放大、精确查找、长按、双击、拖动和等待目标。
+- 任务检查点、首页继续任务、已验证路线记忆。
+- 经手机批准的 MCP 直接控制。
 
----
+### 修复
+
+- Pro 接收不了图片时，手机操作改用 Flash。
+- WebView 不可靠的勾选状态标为未知，并附图。
+- 拦截旧截图编号和重复空点，检查执行结果。
+- 保留 DeepSeek 工具推理回放；修正连接重启时端口复用的顺序。
+
+测试：938 项单测，0 失败、1 跳过；设备检查 15 项通过。详见 [测试记录](docs/VALIDATION-2026-11-16.md)。
 
 ## [0.2.0] - November 2026
 
