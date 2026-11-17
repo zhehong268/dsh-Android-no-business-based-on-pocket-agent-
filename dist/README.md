@@ -1,5 +1,7 @@
 # 安装 dsh
 
+维护者：[zhehong268](https://github.com/zhehong268) · 开源协议：[AGPL-3.0](../LICENSE) · [版权与来源](../NOTICE.md)
+
 下载 [dsh-phone-agent.apk](dsh-phone-agent.apk)，在 Android 11 或更新版本上安装。0.6.0 沿用旧证书，可覆盖升级。
 
 1. 在设置里登录 DeepSeek 账号，或填写模型配置。

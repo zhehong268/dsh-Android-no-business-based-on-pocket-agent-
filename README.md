@@ -1,9 +1,12 @@
 # dsh Android
 
+[![维护者：zhehong268](https://img.shields.io/badge/Maintainer-zhehong268-181717?logo=github)](https://github.com/zhehong268)
+[![开源协议：AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue)](LICENSE)
+
 让模型在 Android 上读屏、点击和输入。支持登录 DeepSeek 账号，也可以自行配置模型服务。
 手机可以独立运行任务；连接电脑后，也能通过 MCP 逐步操作。
 
-基于 [PocketAgent 0.2.0](https://github.com/ManojDevarajulu/PocketAgent) 修改。
+由 [zhehong268](https://github.com/zhehong268) 维护，基于 [PocketAgent 0.2.0](https://github.com/ManojDevarajulu/PocketAgent) 修改。
 当前版本：0.6.0，包名 `dev.pocketagent`。
 
 [下载 APK](dist/dsh-phone-agent.apk) · [安装说明](dist/README.md) · [电脑连接](docs/MCP-DIRECT.md) · [测试记录](docs/VALIDATION-0.6.0.md)
@@ -65,4 +68,4 @@ Debug 构建和 Release 分支编译通过，Lint 有 112 条警告、0 错误�
 
 ## 许可
 
-[AGPL-3.0](LICENSE)。上游说明保存在 [docs/UPSTREAM_README.md](docs/UPSTREAM_README.md)。
+[AGPL-3.0](LICENSE)。dsh 定制修改的署名见 [NOTICE.md](NOTICE.md)，第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。上游说明保存在 [docs/UPSTREAM_README.md](docs/UPSTREAM_README.md)。
