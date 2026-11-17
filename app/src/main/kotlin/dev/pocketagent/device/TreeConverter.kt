@@ -39,6 +39,7 @@ class TreeConverter(private val maxDepth: Int = 60, private val maxNodes: Int = 
                 focused = node.focused,
                 stateDescription = node.stateDescription,
                 viewId = node.viewId,
+                hint = node.hint,
             )
         }
 

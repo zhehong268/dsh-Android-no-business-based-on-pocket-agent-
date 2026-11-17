@@ -148,7 +148,7 @@ internal class ScreenReader(private val service: AccessibilityService) {
             node.getBoundsInScreen(rect)
             val raw = RawNode(
                 className = node.className?.toString(),
-                text = node.text?.toString()?.takeIf { it.isNotBlank() } ?: if (node.isEditable) node.hintText?.toString() else null,
+                text = node.text?.toString()?.takeUnless { node.isShowingHintText },
                 description = node.contentDescription?.toString(),
                 clickable = node.isClickable,
                 editable = node.isEditable,
@@ -166,6 +166,7 @@ internal class ScreenReader(private val service: AccessibilityService) {
                 focused = node.isFocused,
                 stateDescription = node.stateDescription?.toString() ?: if (Build.VERSION.SDK_INT >= 36 && node.checked == AccessibilityNodeInfo.CHECKED_STATE_PARTIAL) "部分选中" else null,
                 viewId = node.viewIdResourceName,
+                hint = node.hintText?.toString(),
             )
             live[raw] = node
             return raw

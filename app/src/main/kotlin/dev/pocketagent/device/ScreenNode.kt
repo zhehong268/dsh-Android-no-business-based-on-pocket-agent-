@@ -26,9 +26,10 @@ data class ScreenNode(
     val focused: Boolean = false,
     val stateDescription: String? = null,
     val viewId: String? = null,
+    val hint: String? = null,
 ) {
-    /** The first non-blank of text and description, trimmed, or null when both are blank. */
-    fun label(): String? = listOf(text, description).firstNotNullOfOrNull { it?.trim()?.takeIf(String::isNotEmpty) }
+    /** Display label; [hint] is a fallback, never the actual value stored in [text]. */
+    fun label(): String? = listOf(text, description, hint).firstNotNullOfOrNull { it?.trim()?.takeIf(String::isNotEmpty) }
 }
 
 /** One reading of the screen. [ownWindowBounds] are dsh's own windows, kept for the safety gate. */

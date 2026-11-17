@@ -11,6 +11,7 @@ object ExecutionEvidence {
             append('|').append(it.role).append(':').append(it.label()).append(':').append(it.bounds)
             append(':').append(it.checkable).append(':').append(it.checked).append(':').append(it.selected)
             append(':').append(it.enabled).append(':').append(it.focused).append(':').append(it.stateDescription)
+            append(':').append(it.checkedReliable).append(':').append(it.viewId)
         }
     }
     fun inspect(before: Screen, after: Screen, target: ScreenNode?): String? {

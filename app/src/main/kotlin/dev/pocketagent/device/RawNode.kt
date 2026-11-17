@@ -21,4 +21,5 @@ data class RawNode(
     val focused: Boolean = false,
     val stateDescription: String? = null,
     val viewId: String? = null,
+    val hint: String? = null,
 )

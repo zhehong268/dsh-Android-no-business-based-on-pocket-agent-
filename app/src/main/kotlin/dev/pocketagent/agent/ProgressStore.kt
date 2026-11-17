@@ -15,6 +15,7 @@ data class TaskProgress(
     val trail: String = "",
     val packageName: String = "",
     val uncertainAction: Boolean = false,
+    val pendingMessage: Boolean = false,
 )
 
 /** Private app storage, independent of SAF. No screen dumps, screenshots, keys or reasoning are persisted. */

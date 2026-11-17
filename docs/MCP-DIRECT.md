@@ -36,6 +36,8 @@ Content-Type: application/json
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"tap","arguments":{"node_id":"b12"}}}
 ```
 
+`find_elements` 可组合 `text`、`role`、`editable`、`view_id` 和容器 `node_id`。找无标签输入框可传 `{"editable":true}`；`tap_text` 支持 `direction:"up"`，默认向下。
+
 上面省略了 MCP 初始化。`b12` 仅作示例，实际使用时要换成刚返回的节点。
 截图点击使用 `tap_mark`，同时传入该截图的 `observation`。重新读屏后，旧编号会失效。
 

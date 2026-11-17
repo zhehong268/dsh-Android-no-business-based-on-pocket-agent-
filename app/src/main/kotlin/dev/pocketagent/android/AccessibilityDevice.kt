@@ -248,7 +248,7 @@ class AccessibilityDevice(
         if (current.screen.find(node.id) != node) return null
         val live = current.handles[node.id] ?: return null
         val activeWindowId = reader.current().id
-        val state = if (live.refresh()) {
+        val state = if (live.refresh() && live.isEnabled) {
             LiveNodeState(
                 label = labelOf(live),
                 bounds = boundsOf(live),
@@ -277,7 +277,7 @@ class AccessibilityDevice(
         if (current.screen.deepestAt(x, y) == null) return false
         val fresh = reader.read(current.screen.observation).screen
         if (fresh.packageName.isEmpty() || fresh.packageName != current.screen.packageName) return false
-        return revalidator.pointStillMatches(current.screen, x, y, fresh.deepestAt(x, y)?.label())
+        return revalidator.pointStillMatches(current.screen, x, y, fresh)
     }
 
     // --- Actions ---
@@ -689,8 +689,9 @@ class AccessibilityDevice(
     private fun labelOf(node: AccessibilityNodeInfo): String? = ScreenNode(
         id = "",
         role = "",
-        text = node.text?.toString()?.takeIf { it.isNotBlank() } ?: if (node.isEditable) node.hintText?.toString() else null,
+        text = node.text?.toString()?.takeUnless { node.isShowingHintText },
         description = node.contentDescription?.toString(),
+        hint = node.hintText?.toString(),
         packageName = "",
         bounds = Bounds(0, 0, 0, 0),
     ).label()
@@ -707,6 +708,6 @@ class AccessibilityDevice(
         const val SCREENSHOT_LONG_SIDE_PX = 1_280
         const val SCREENSHOT_RETRY_MS = 1_000L
         val SCREEN_CHANGED = ActionResult.Failed("界面变了")
-        val GESTURE_INTERRUPTED = ActionResult.Failed("手势被打断了")
+        val GESTURE_INTERRUPTED = ActionResult.Failed("手势被打断了", mayHaveEffect = true)
     }
 }

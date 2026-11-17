@@ -8,25 +8,30 @@ package dev.pocketagent.device
 class ScreenSerializer(private val ownPackage: String, private val maxChars: Int = 24_000, private val geometry: Boolean = false) {
 
     fun serialize(screen: Screen): String {
-        val lines = ArrayList<String>()
+        val lines = ArrayList<Row>()
         collect(screen.root, depth = 0, ancestorLabel = null, out = lines)
 
         val out = StringBuilder()
         out.append("<screen_data app=\"").append(cleanUntrusted(screen.packageName, MAX_LABEL))
             .append("\" label=\"").append(cleanUntrusted(screen.appLabel.orEmpty(), MAX_LABEL)).append("\">\n")
         if (screen.keyboardVisible) out.append("[键盘已展开，可能遮挡下半屏]\n")
-        for ((i, line) in lines.withIndex()) {
-            if (out.length + line.length + 1 > maxChars) {
-                out.append("[truncated: ").append(lines.size - i).append(" more nodes]\n")
-                break
-            }
-            out.append(line).append('\n')
+        val budget = maxChars - out.length - 60
+        val selected = if (lines.sumOf { it.text.length + 1 } <= budget) lines.indices.toSet() else {
+            var remaining = budget
+            lines.indices.sortedWith(compareBy({ lines[it].priority }, { it })).filter { index ->
+                val size = lines[index].text.length + 1
+                if (size <= remaining) { remaining -= size; true } else false
+            }.toSet()
         }
+        for (i in lines.indices) if (i in selected) out.append(lines[i].text).append('\n')
+        if (selected.size < lines.size) out.append("[truncated: ").append(lines.size - selected.size).append(" more nodes]\n")
         return out.append("</screen_data>").toString()
     }
 
+    private data class Row(val text: String, val priority: Int)
+
     /** Depth-first. Unkept nodes are skipped and their children promoted one level up. */
-    private fun collect(node: ScreenNode, depth: Int, ancestorLabel: String?, out: MutableList<String>) {
+    private fun collect(node: ScreenNode, depth: Int, ancestorLabel: String?, out: MutableList<Row>) {
         if (node.isPassword || node.packageName == ownPackage) return
         val label = node.label()
         val flags = buildList {
@@ -38,8 +43,15 @@ class ScreenSerializer(private val ownPackage: String, private val maxChars: Int
         if (node.selected) flags += "selected=true"
         if (!node.enabled) flags += "enabled=false"
         if (node.focused) flags += "focused=true"
+        if (node.editable && node.text.isNullOrEmpty()) flags += "value_empty=true"
         val kept = label != null || flags.isNotEmpty()
-        if (kept) out += line(node, label, flags, borrowed = if (label == null) ancestorLabel else null, depth)
+        if (kept) out += Row(line(node, label, flags, borrowed = if (label == null) ancestorLabel else null, depth), when {
+            node.editable || node.focused -> 0
+            node.enabled && (node.role == "button" || node.checkable) -> 1
+            node.enabled && node.clickable -> 2
+            depth <= 1 -> 3
+            else -> 4
+        })
         for (child in node.children) {
             collect(child, if (kept) depth + 1 else depth, label ?: ancestorLabel, out)
         }

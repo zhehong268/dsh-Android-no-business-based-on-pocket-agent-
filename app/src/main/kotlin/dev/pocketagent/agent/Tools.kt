@@ -15,13 +15,13 @@ sealed interface ToolCall {
     data class Tap(val nodeId: String?, val x: Int?, val y: Int?, val irreversible: Boolean) : ToolCall
 
     /** Finds text on screen, scrolling down when it is not visible yet, then taps it. */
-    data class TapText(val text: String, val scrolls: Int = 3, val irreversible: Boolean = false, val container: String? = null) : ToolCall
+    data class TapText(val text: String, val scrolls: Int = 3, val irreversible: Boolean = false, val container: String? = null, val direction: Direction = Direction.DOWN) : ToolCall
     data class TypeText(val nodeId: String, val text: String, val submit: Boolean = false, val mode: String = "replace") : ToolCall
     data class Scroll(val direction: Direction, val nodeId: String?) : ToolCall
     data class ZoomScreen(val left:Int,val top:Int,val right:Int,val bottom:Int) : ToolCall
     data object ReadScreen : ToolCall
     data class ReadElement(val nodeId: String) : ToolCall
-    data class FindElements(val text: String, val container: String?) : ToolCall
+    data class FindElements(val text: String, val container: String?, val role: String? = null, val editable: Boolean? = null, val viewId: String? = null) : ToolCall
     data class TapMark(val index: Int, val observation: Int, val irreversible: Boolean) : ToolCall
     data class WaitFor(val text: String, val seconds: Int, val checked: Boolean? = null) : ToolCall
     data class Checkpoint(val goal: String, val completed: String, val next: String, val expected: String) : ToolCall
@@ -191,16 +191,26 @@ object Tools {
                 Field("text", Kind.STRING, "要点的东西上显示的文字，可以只写一部分。", min = 1, max = 100),
                 nodeId("限定在哪个容器内查找。", required = false),
                 Field("scrolls", Kind.INTEGER, "找不到时最多往下滚几次，默认 3。", required = false, min = 0, max = 5),
+                Field("direction", Kind.CHOICE, "查找时滚动方向，默认 down。", required = false, choices = listOf("down", "up")),
                 Field("irreversible", Kind.BOOLEAN, "如果这次点击会发送、支付、发布或删除任何内容，设为 true。", required = false),
             ),
-        ) { a -> ToolCall.TapText(a["text"] as String, a["scrolls"] as Int? ?: 3, a["irreversible"] as Boolean? ?: false, a["node_id"] as String?) },
+        ) { a -> ToolCall.TapText(a["text"] as String, a["scrolls"] as Int? ?: 3, a["irreversible"] as Boolean? ?: false, a["node_id"] as String?, DIRECTIONS.getValue(a["direction"] as String? ?: "down")) },
         Spec("zoom_screen", "读取并放大屏幕指定区域，小字和图标不清楚时使用；坐标仍是原屏幕像素。", listOf(Field("left",Kind.INTEGER,"左边。",min=0,max=MAX_COORDINATE),Field("top",Kind.INTEGER,"上边。",min=0,max=MAX_COORDINATE),Field("right",Kind.INTEGER,"右边。",min=1,max=MAX_COORDINATE),Field("bottom",Kind.INTEGER,"下边。",min=1,max=MAX_COORDINATE))) { a ->
             val l=a["left"] as Int;val t=a["top"] as Int;val r=a["right"] as Int;val b=a["bottom"] as Int
             require(r>l && b>t) { "区域宽高必须大于零" };ToolCall.ZoomScreen(l,t,r,b)
         },
         Spec("read_screen", "重新观察当前屏幕；稀疏界面会自动附图。", emptyList()) { ToolCall.ReadScreen },
         Spec("read_element", "读取节点完整文本与状态，避免题干或消息被截断。", listOf(nodeId("最新节点。", true))) { a -> ToolCall.ReadElement(a["node_id"] as String) },
-        Spec("find_elements", "只查找不点击；优先精确匹配，返回候选和最新节点。", listOf(Field("text", Kind.STRING, "目标文字。", min=1, max=100), nodeId("限定容器。", false))) { a -> ToolCall.FindElements(a["text"] as String, a["node_id"] as String?) },
+        Spec("find_elements", "只查找不点击。可组合文字、控件类型、是否可输入、资源 id；找无标签输入框可只给 editable=true。", listOf(
+            Field("text", Kind.STRING, "目标文字，可省略。", required=false, min=1, max=100),
+            nodeId("限定容器。", false),
+            Field("role", Kind.CHOICE, "控件类型。", required=false, choices=listOf("input","button","text","image","list","group","checkbox")),
+            Field("editable", Kind.BOOLEAN, "是否可输入。", required=false),
+            Field("view_id", Kind.STRING, "完整资源 id 或 / 后的名字。", required=false, min=1,max=300),
+        )) { a ->
+            require(listOf("text","role","editable","view_id").any { a.containsKey(it) }) { "至少指定一个查找条件" }
+            ToolCall.FindElements(a["text"] as String? ?: "", a["node_id"] as String?,a["role"] as String?,a["editable"] as Boolean?,a["view_id"] as String?)
+        },
         Spec("tap_mark", "点击最近截图编号；必须带该截图的 observation，过期编号会拒绝。", listOf(Field("index", Kind.INTEGER, "图上编号。", min=1, max=100), Field("observation", Kind.INTEGER, "截图观察编号。", min=0, max=Int.MAX_VALUE), Field("irreversible", Kind.BOOLEAN, "不可撤销动作。", required=false))) { a -> ToolCall.TapMark(a["index"] as Int, a["observation"] as Int, a["irreversible"] as Boolean? ?: false) },
         Spec("wait_for", "等待文字或控件状态出现，超时返回失败。", listOf(Field("text", Kind.STRING, "目标文字。", min=1, max=100), Field("seconds", Kind.INTEGER, "最长等待秒数。", required=false, min=1, max=20), Field("checked", Kind.BOOLEAN, "等待该控件勾选状态。", required=false))) { a -> ToolCall.WaitFor(a["text"] as String, a["seconds"] as Int? ?: 8, a["checked"] as Boolean?) },
         Spec("checkpoint", "保存任务分解与进度。复杂任务开始及完成子任务后使用。不要写密码或隐私原文。", listOf(Field("goal", Kind.STRING, "当前子目标。", min=1,max=500), Field("completed", Kind.STRING, "已完成摘要。", min=0,max=2000), Field("next", Kind.STRING, "下一步。", min=0,max=500), Field("expected", Kind.STRING, "如何确认本步成功。", min=0,max=500))) { a -> ToolCall.Checkpoint(a["goal"] as String,a["completed"] as String,a["next"] as String,a["expected"] as String) },

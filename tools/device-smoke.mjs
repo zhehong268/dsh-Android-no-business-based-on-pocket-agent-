@@ -57,7 +57,8 @@ try{
   assert.ok(connected,'测试服务启动完成: '+startupError);
   const html=`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:21px sans-serif;padding:20px}button,input{font:22px sans-serif;padding:12px;margin:10px;display:block}label{display:block;padding:18px}input[type=checkbox]{display:inline}</style><h1>dsh 回归测试</h1><button style="position:fixed;right:12px;top:30px;width:130px;z-index:10" onclick="this.textContent='已点中';fetch('/event?name=covered')">遮挡测试</button><label><input id="toggle" type="checkbox" onchange="fetch('/event?name='+encodeURIComponent('checked:'+this.checked))">测试提醒</label><input aria-label="测试输入框" id="entry" placeholder="测试输入框" oninput="fetch('/event?name='+encodeURIComponent('input:'+this.value))"><button onclick="this.textContent='选择张三成功';fetch('/event?name=exact')">张三</button><button>张三丰</button><button>同名联系人</button><button>同名联系人</button><a href="/canvas">打开画布</a><p id="result">测试准备完毕</p>`;
   const canvas=`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><canvas id="c" width="660" height="850" style="width:100%;height:850px"></canvas><script>let c=document.querySelector('canvas'),x=c.getContext('2d');function draw(clicked=false){x.fillStyle=clicked?'#dcfce7':'#eef2ff';x.fillRect(0,0,660,850);x.font='32px sans-serif';['蓝色按钮','绿色按钮','橙色按钮'].forEach((s,i)=>{x.fillStyle=['#2563eb','#16a34a','#ea580c'][i];x.fillRect(70,120+i*200,480,100);x.fillStyle='white';x.fillText(s,180,183+i*200)});if(clicked){x.fillStyle='black';x.fillText('画布已响应',170,800)}}draw();c.onclick=()=>{draw(true);fetch('/event?name=canvas')};</script>`;
-  const chat=`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:22px sans-serif;padding:20px}button,input{font:22px sans-serif;padding:12px;margin:10px;display:block}</style><div id="list"><h1>微信流程本地测试</h1><button onclick="document.querySelector('#list').hidden=true;document.querySelector('#chat').hidden=false;fetch('/event?name=chat-open')">测试联系人</button><button>测试联系人二</button></div><div id="chat" hidden><h1>测试联系人</h1><div id="messages"></div><input id="message" aria-label="消息输入框" placeholder="消息输入框" oninput="fetch('/event?name='+encodeURIComponent('message:'+this.value))"><button onclick="let i=document.querySelector('#message');if(!i.value)return;fetch('/event?name='+encodeURIComponent('sent:'+i.value));document.querySelector('#messages').textContent=i.value+' 已发送';i.value='';">发送</button></div>`;
+  const chat=`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:22px sans-serif;padding:20px}button,input{font:22px sans-serif;padding:12px;margin:10px;display:block}</style><div id="list"><h1>微信流程本地测试</h1><button onclick="document.querySelector('#list').hidden=true;document.querySelector('#chat').hidden=false;fetch('/event?name=chat-open')">测试联系人</button><button>测试联系人二</button></div><div id="chat" hidden><h1>测试联系人</h1><div id="messages"></div><p id="status"></p><input id="message" aria-label="消息输入框" placeholder="消息输入框" oninput="fetch('/event?name='+encodeURIComponent('message:'+this.value))"><button onclick="let i=document.querySelector('#message');if(!i.value)return;fetch('/event?name='+encodeURIComponent('sent:'+i.value));document.querySelector('#messages').textContent=i.value+' 已发送';i.value='';">发送</button></div>`;
+  const pendingChat=chat.replace("fetch('/event?name='+encodeURIComponent('sent:'+i.value));document.querySelector('#messages').textContent=i.value+' 已发送';i.value='';", "fetch('/event?name=send-pending');document.querySelector('#status').textContent='请求处理中';");
   server=createServer((req,res)=>{if(req.url.includes('/chat/completions')) {
     req.resume();req.on('end',()=>setTimeout(()=>{
       if(failModel){res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'Local fixture error',type:'invalid_request_error'}}));return;}
@@ -66,7 +67,7 @@ try{
       const args=first?{goal:'核对本地任务面板',completed:'观察页面',next:'保存测试结果',expected:'任务结束后面板消失'}:{summary:'本地生命周期检查完成',success:true};
       res.setHeader('content-type','application/json');res.end(JSON.stringify({choices:[{message:{role:'assistant',content:null,tool_calls:[{id:'fixture-'+modelRequests,type:'function',function:{name,arguments:JSON.stringify(args)}}]},finish_reason:'tool_calls'}],usage:{prompt_tokens:1,completion_tokens:1}}));
     },1400));return;
-  }if(req.url.startsWith('/event')){events.push(new URL(req.url,'http://local').searchParams.get('name'));res.end('ok');return;}res.setHeader('content-type','text/html;charset=utf-8');res.end(req.url.startsWith('/canvas')?canvas:req.url.startsWith('/chat')?chat:html);});
+  }if(req.url.startsWith('/event')){events.push(new URL(req.url,'http://local').searchParams.get('name'));res.end('ok');return;}res.setHeader('content-type','text/html;charset=utf-8');res.end(req.url.startsWith('/canvas')?canvas:req.url.startsWith('/chat-pending')?pendingChat:req.url.startsWith('/chat')?chat:html);});
   await new Promise(r=>server.listen(18100,'0.0.0.0',r));
   const packages=run('shell','pm','list','packages'); const browser=packages.includes('org.chromium.webview_shell')?'org.chromium.webview_shell/.WebViewBrowserActivity':'com.android.chrome/com.google.android.apps.chrome.Main'; run('shell','am','start','-W','-a','android.intent.action.VIEW','-d','http://127.0.0.1:18100/','-n',browser);await delay(2500);
   const pending=rpc('control_start',{task:'仅在本地回归测试页面检查读屏、勾选、中文输入和截图，允许在本地测试会话发送测试正文，禁止联系真实用户。'}).then(result=>({result}),error=>({error}));
@@ -124,6 +125,8 @@ try{
   const selected=saveResult('10-selected',await rpc('tap_text',{text:'测试联系人',scrolls:0}));
   check('一次触摸打开正确会话',!selected.isError&&events.includes('chat-open'));
   const chatScreen=saveResult('10-chat-screen',await rpc('read_screen'));
+  const semantic=saveResult('10-semantic',await rpc('find_elements',{editable:true,view_id:'message'}));
+  check('按可输入状态与资源id定位正文框',!semantic.isError&&text(semantic).includes('消息输入框')&&text(semantic).split('<screen_data>')[0].split(/<screen_data /)[0].split('\n').filter(l=>l.startsWith('[')).length===1);
   const field=text(chatScreen).split('\n').find(l=>l.includes('view_id="message"'))?.match(/\[([a-z]+\d+)\]/)?.[1];assert.ok(field,'message field');
   const message='明天十点见，这是本地回归测试。';
   const entered=await rpc('type',{node_id:field,text:message,mode:'replace'});
@@ -134,8 +137,22 @@ try{
   if(process.env.DSH_SMOKE_APPROVE==='1')run('shell','input','tap','780','2180');
   const sendSettled=await sendPending;if(sendSettled.error)throw sendSettled.error;
   check('单次确认后只发出一条本地消息',!sendSettled.result.isError&&events.filter(x=>x==='sent:'+message).length===1);
+  check('发送结果有新增气泡与清空输入框的依据',text(sendSettled.result).includes('已核验：新增正文气泡'));
   const sent=saveResult('11-message-result',await rpc('read_screen'));
   check('发出后看见正文和已发送标记',text(sent).includes('已发送')&&text(sent).includes(message));
+  check('输入提示词不被当作草稿内容',text(sent).split('\n').some(l=>l.includes('view_id="message"')&&l.includes('value_empty=true')));
+  run('shell','am','start','-W','-a','android.intent.action.VIEW','-d','http://127.0.0.1:18100/chat-pending','-n',browser);
+  await delay(800);await rpc('read_screen');await rpc('tap_text',{text:'测试联系人',scrolls:0});
+  const pendingField=await rpc('find_elements',{editable:true,view_id:'message'});
+  const pendingId=text(pendingField).match(/\[([a-z]+\d+)\]/)?.[1];assert.ok(pendingId,'pending message field');
+  const pendingTyped=await rpc('type',{node_id:pendingId,text:message,mode:'replace'});
+  if(text(pendingTyped).includes('键盘已展开'))await rpc('back');
+  const uncertainSend=rpc('tap_text',{text:'发送',scrolls:0});
+  await delay(900);if(process.env.DSH_SMOKE_APPROVE==='1')run('shell','input','tap','780','2180');
+  const uncertain=saveResult('12-uncertain-send',await uncertainSend);
+  check('处理中的画面变化不冒充发送成功',text(uncertain).includes('尚未同时看到')&&events.filter(x=>x==='send-pending').length===1);
+  const waitDraft=await rpc('wait_for',{text:message,seconds:1});check('草稿文字不能解除发送未确认状态',waitDraft.isError);
+  const noRepeat=await rpc('tap_text',{text:'发送',scrolls:0});check('结果不明时阻止重复触摸发送',noRepeat.isError&&events.filter(x=>x==='send-pending').length===1);
   shot('12-before-stop');
   // This hits the actual panel's Stop button, rather than the MCP stop API.
   const dump=run('shell','dumpsys','window','windows');

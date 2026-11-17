@@ -63,7 +63,7 @@ sealed interface Shortcut {
 
 sealed interface ActionResult {
     data object Ok : ActionResult
-    data class Failed(val reason: String) : ActionResult
+    data class Failed(val reason: String, val mayHaveEffect: Boolean = false) : ActionResult
 }
 
 /** Everything the agent needs from the phone. The Android implementation comes later; tests use fakes. */

@@ -28,4 +28,13 @@ class Revalidator(private val ownPackage: String, private val tolerancePx: Int =
     /** [liveLabel] is the label of the deepest live node at the point; a point with no label must still have none. */
     fun pointStillMatches(observed: Screen, x: Int, y: Int, liveLabel: String?): Boolean =
         observed.deepestAt(x, y)?.label() == liveLabel
+
+    fun pointStillMatches(observed: Screen, x: Int, y: Int, fresh: Screen): Boolean {
+        if (fresh.packageName.isBlank() || observed.packageName != fresh.packageName) return false
+        if (observed.windowId != null && fresh.windowId != observed.windowId) return false
+        val old = observed.deepestAt(x, y) ?: return false
+        val next = fresh.deepestAt(x, y) ?: return false
+        if (old.role != next.role || old.viewId != next.viewId || !next.enabled || next.isPassword) return false
+        return nodeStillMatches(old, LiveNodeState(next.label(), next.bounds, true, next.packageName, true))
+    }
 }
