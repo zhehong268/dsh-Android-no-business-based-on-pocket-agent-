@@ -39,6 +39,7 @@ class AnthropicClient(private val config: ProviderConfig, private val caller: Ht
 
         /** User blocks whose request got an empty reply; they go first in the next user message. */
         private var pendingBlocks: List<JsonObject> = emptyList()
+        private var outputBudget = DeepSeekOptions.budget(config)
 
         override val usage: TokenUsage get() = usageTotal
 
@@ -49,19 +50,30 @@ class AnthropicClient(private val config: ProviderConfig, private val caller: Ht
                 put("role", "user")
                 put("content", JsonArray(blocks))
             }
-            val messages = compactImages(history + userMessage)
+            val messages = ContextBudget.trimOldScreens(compactImages(history + userMessage),config.contextTokens,if(DeepSeekOptions.applies(config))1024 else 4096)
 
             val withOptional = !optionalFieldsRejected && hasOptionalFields()
-            var outcome = post(messages, withOptional)
-            if (withOptional && outcome is HttpOutcome.Failure && outcome.status == 400) {
-                outcome = post(messages, false)
-                if (outcome is HttpOutcome.Success) optionalFieldsRejected = true
+            var budgetRetries = 0
+            while (true) {
+                var outcome = post(messages, withOptional)
+                if (withOptional && outcome is HttpOutcome.Failure && outcome.status == 400) {
+                    outcome = post(messages, false)
+                    if (outcome is HttpOutcome.Success) optionalFieldsRejected = true
+                }
+                val body = when (outcome) {
+                    is HttpOutcome.Failure -> return LlmResult.Failed(outcome.kind, outcome.message)
+                    is HttpOutcome.Success -> outcome.body
+                }
+                val envelope = runCatching { Json.parseToJsonElement(body) as? JsonObject }.getOrNull()
+                if (DeepSeekOptions.applies(config) && envelope?.str("stop_reason") == "max_tokens") {
+                    usageTotal += usageOf(envelope["usage"] as? JsonObject)
+                    val next = DeepSeekOptions.expanded(outputBudget)
+                    if (budgetRetries++ >= 1 || next <= outputBudget) return LlmResult.Failed(FailureKind.OTHER,"模型输出仍被截断，未执行截断的工具调用。请缩小子目标后重试。")
+                    outputBudget = next
+                    continue
+                }
+                return parseReply(body, userMessage, blocks)
             }
-            val body = when (outcome) {
-                is HttpOutcome.Failure -> return LlmResult.Failed(outcome.kind, outcome.message)
-                is HttpOutcome.Success -> outcome.body
-            }
-            return parseReply(body, userMessage, blocks)
         }
 
         private fun compactImages(messages: List<JsonObject>): List<JsonObject> {
@@ -90,13 +102,17 @@ class AnthropicClient(private val config: ProviderConfig, private val caller: Ht
             return caller.post(url, headers, requestBody(messages, withOptional).toString())
         }
 
-        private fun hasOptionalFields() = config.effort != null || fallbacksEnabled()
+        private fun hasOptionalFields() = (!DeepSeekOptions.applies(config) && config.effort != null) || fallbacksEnabled()
 
         private fun fallbacksEnabled() = config.host == ANTHROPIC_HOST && config.model in FALLBACK_MODELS
 
         private fun requestBody(messages: List<JsonObject>, withOptional: Boolean) = buildJsonObject {
             put("model", config.model)
-            put("max_tokens", config.maxOutputTokens)
+            put("max_tokens", outputBudget)
+            if (DeepSeekOptions.applies(config)) {
+                putJsonObject("thinking") { put("type","enabled") }
+                putJsonObject("output_config") { put("effort",DeepSeekOptions.effort(config)) }
+            }
             putJsonArray("system") {
                 add(
                     buildJsonObject {
@@ -125,7 +141,7 @@ class AnthropicClient(private val config: ProviderConfig, private val caller: Ht
             put("messages", JsonArray(messages))
             put("cache_control", EPHEMERAL)
             if (withOptional) {
-                config.effort?.let { effort -> putJsonObject("output_config") { put("effort", effort) } }
+                if (!DeepSeekOptions.applies(config)) config.effort?.let { effort -> putJsonObject("output_config") { put("effort", effort) } }
                 if (fallbacksEnabled()) put("fallbacks", "default")
             }
         }

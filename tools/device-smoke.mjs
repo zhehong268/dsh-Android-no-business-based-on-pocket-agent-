@@ -13,9 +13,9 @@ function run(...args){const r=spawnSync(adb,['-s',serial,...args],{encoding:'utf
 function prefsWrite(xml){const r=spawnSync(adb,['-s',serial,'shell','run-as','dev.pocketagent','sh','-c',"'cat > shared_prefs/pocketagent_setup.xml'"],{input:xml,encoding:'utf8',timeout:10000});if(r.status!==0)throw Error('cannot write test preferences');}
 function shot(name){const r=spawnSync(adb,['-s',serial,'exec-out','screencap','-p'],{timeout:10000});if(r.status!==0)throw Error('screenshot failed');writeFileSync(`${out}/${name}.png`,r.stdout);}
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
-let original,enabled,token=randomBytes(24).toString('hex'),counter=0,server,modelRequests=0,failModel=false;
-const checks=[],events=[];
-async function rpc(name,args={}){const r=await fetch('http://127.0.0.1:18765/mcp',{method:'POST',headers:{'content-type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({jsonrpc:'2.0',id:++counter,method:'tools/call',params:{name,arguments:args}}),signal:AbortSignal.timeout(140000)});assert.equal(r.status,200,`${name} HTTP ${r.status}`);const data=await r.json();if(data.error)throw Error(`${name}: ${JSON.stringify(data.error)}`);return data.result;}
+let original,enabled,proxy,token=randomBytes(24).toString('hex'),counter=0,server,modelRequests=0,failModel=false;
+const checks=[],events=[],timings=[];
+async function rpc(name,args={}){const started=performance.now();const r=await fetch('http://127.0.0.1:18765/mcp',{method:'POST',headers:{'content-type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({jsonrpc:'2.0',id:++counter,method:'tools/call',params:{name,arguments:args}}),signal:AbortSignal.timeout(140000)});assert.equal(r.status,200,`${name} HTTP ${r.status}`);const data=await r.json();if(data.error)throw Error(`${name}: ${JSON.stringify(data.error)}`);timings.push({name,ms:Math.round(performance.now()-started),interactive:name==='control_start'||name==='run_task'||(name==='tap_text'&&args.text==='发送')});return data.result;}
 function text(result){return result.content.filter(x=>x.type==='text').map(x=>x.text).join('\n');}
 function check(name,value){assert.ok(value,name);checks.push({name,passed:true});console.log(`PASS ${name}`);}
 function saveResult(name,result){const stripped={...result,content:result.content.map((c,i)=>{if(c.type!=='image')return c;const p=`${out}/${name}-${i}.png`;writeFileSync(p,Buffer.from(c.data,'base64'));return {type:'image',path:p};})};writeFileSync(`${out}/${name}.json`,JSON.stringify(stripped,null,2),'utf8');return result;}
@@ -28,6 +28,8 @@ try{
   catch { original='<?xml version="1.0" encoding="utf-8"?><map></map>'; run('shell','run-as','dev.pocketagent','mkdir','-p','shared_prefs'); }
   original=original.replace(/<map\s*\/>/,'<map></map>');
   enabled=run('shell','settings','get','secure','enabled_accessibility_services').trim();
+  proxy=run('shell','settings','get','global','http_proxy').trim();
+  run('shell','settings','put','global','http_proxy',':0');run('shell','settings','delete','global','http_proxy');
   run('shell','am','force-stop','dev.pocketagent');
   const xml=original.replace(/<boolean name="settings\.computerLink"[^>]*\/>/g,'').replace(/<string name="settings\.linkToken">[^<]*<\/string>/g,'').replace('</map>',`<boolean name="settings.computerLink" value="true" /><string name="settings.linkToken">${token}</string></map>`);
   // A credential-free local model fixture; the original configuration stays only in memory.
@@ -55,9 +57,9 @@ try{
     shot('00-startup-failed');
   }
   assert.ok(connected,'测试服务启动完成: '+startupError);
-  const html=`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:21px sans-serif;padding:20px}button,input{font:22px sans-serif;padding:12px;margin:10px;display:block}label{display:block;padding:18px}input[type=checkbox]{display:inline}</style><h1>dsh 回归测试</h1><button style="position:fixed;right:12px;top:30px;width:130px;z-index:10" onclick="this.textContent='已点中';fetch('/event?name=covered')">遮挡测试</button><label><input id="toggle" type="checkbox" onchange="fetch('/event?name='+encodeURIComponent('checked:'+this.checked))">测试提醒</label><input aria-label="测试输入框" id="entry" placeholder="测试输入框" oninput="fetch('/event?name='+encodeURIComponent('input:'+this.value))"><button onclick="this.textContent='选择张三成功';fetch('/event?name=exact')">张三</button><button>张三丰</button><button>同名联系人</button><button>同名联系人</button><a href="/canvas">打开画布</a><p id="result">测试准备完毕</p>`;
-  const canvas=`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><canvas id="c" width="660" height="850" style="width:100%;height:850px"></canvas><script>let c=document.querySelector('canvas'),x=c.getContext('2d');function draw(clicked=false){x.fillStyle=clicked?'#dcfce7':'#eef2ff';x.fillRect(0,0,660,850);x.font='32px sans-serif';['蓝色按钮','绿色按钮','橙色按钮'].forEach((s,i)=>{x.fillStyle=['#2563eb','#16a34a','#ea580c'][i];x.fillRect(70,120+i*200,480,100);x.fillStyle='white';x.fillText(s,180,183+i*200)});if(clicked){x.fillStyle='black';x.fillText('画布已响应',170,800)}}draw();c.onclick=()=>{draw(true);fetch('/event?name=canvas')};</script>`;
-  const chat=`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:22px sans-serif;padding:20px}button,input{font:22px sans-serif;padding:12px;margin:10px;display:block}</style><div id="list"><h1>微信流程本地测试</h1><button onclick="document.querySelector('#list').hidden=true;document.querySelector('#chat').hidden=false;fetch('/event?name=chat-open')">测试联系人</button><button>测试联系人二</button></div><div id="chat" hidden><h1>测试联系人</h1><div id="messages"></div><p id="status"></p><input id="message" aria-label="消息输入框" placeholder="消息输入框" oninput="fetch('/event?name='+encodeURIComponent('message:'+this.value))"><button onclick="let i=document.querySelector('#message');if(!i.value)return;fetch('/event?name='+encodeURIComponent('sent:'+i.value));document.querySelector('#messages').textContent=i.value+' 已发送';i.value='';">发送</button></div>`;
+  const html=`<!doctype html><meta charset="utf-8"><meta name="google" content="notranslate"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:21px sans-serif;padding:20px}button,input{font:22px sans-serif;padding:12px;margin:10px;display:block}label{display:block;padding:18px}input[type=checkbox]{display:inline}</style><h1>dsh 回归测试</h1><button style="position:fixed;right:12px;top:30px;width:130px;z-index:10" onclick="this.textContent='已点中';fetch('/event?name=covered')">遮挡测试</button><label><input id="toggle" type="checkbox" onchange="fetch('/event?name='+encodeURIComponent('checked:'+this.checked))">测试提醒</label><input aria-label="测试输入框" id="entry" placeholder="测试输入框" oninput="fetch('/event?name='+encodeURIComponent('input:'+this.value))"><button onclick="this.textContent='选择张三成功';fetch('/event?name=exact')">张三</button><button>张三丰</button><button>同名联系人</button><button>同名联系人</button><a href="/canvas">打开画布</a><p id="result">测试准备完毕</p>`;
+  const canvas=`<!doctype html><meta charset="utf-8"><meta name="google" content="notranslate"><meta name="viewport" content="width=device-width,initial-scale=1"><canvas id="c" width="660" height="850" style="width:100%;height:850px"></canvas><script>let c=document.querySelector('canvas'),x=c.getContext('2d');function draw(clicked=false){x.fillStyle=clicked?'#dcfce7':'#eef2ff';x.fillRect(0,0,660,850);x.font='32px sans-serif';['蓝色按钮','绿色按钮','橙色按钮'].forEach((s,i)=>{x.fillStyle=['#2563eb','#16a34a','#ea580c'][i];x.fillRect(70,120+i*200,480,100);x.fillStyle='white';x.fillText(s,180,183+i*200)});if(clicked){x.fillStyle='black';x.fillText('画布已响应',170,800)}}draw();c.onclick=()=>{draw(true);fetch('/event?name=canvas')};</script>`;
+  const chat=`<!doctype html><meta charset="utf-8"><meta name="google" content="notranslate"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:22px sans-serif;padding:20px}button,input{font:22px sans-serif;padding:12px;margin:10px;display:block}</style><div id="list"><h1>微信流程本地测试</h1><button onclick="document.querySelector('#list').hidden=true;document.querySelector('#chat').hidden=false;fetch('/event?name=chat-open')">测试联系人</button><button>测试联系人二</button></div><div id="chat" hidden><h1>测试联系人</h1><div id="messages"></div><p id="status"></p><input id="message" aria-label="消息输入框" placeholder="消息输入框" oninput="fetch('/event?name='+encodeURIComponent('message:'+this.value))"><button onclick="let i=document.querySelector('#message');if(!i.value)return;fetch('/event?name='+encodeURIComponent('sent:'+i.value));document.querySelector('#messages').textContent=i.value+' 已发送';i.value='';">发送</button></div>`;
   const pendingChat=chat.replace("fetch('/event?name='+encodeURIComponent('sent:'+i.value));document.querySelector('#messages').textContent=i.value+' 已发送';i.value='';", "fetch('/event?name=send-pending');document.querySelector('#status').textContent='请求处理中';");
   server=createServer((req,res)=>{if(req.url.includes('/chat/completions')) {
     req.resume();req.on('end',()=>setTimeout(()=>{
@@ -141,6 +143,18 @@ try{
   const sent=saveResult('11-message-result',await rpc('read_screen'));
   check('发出后看见正文和已发送标记',text(sent).includes('已发送')&&text(sent).includes(message));
   check('输入提示词不被当作草稿内容',text(sent).split('\n').some(l=>l.includes('view_id="message"')&&l.includes('value_empty=true')));
+  run('shell','am','start','-W','-a','android.intent.action.VIEW','-d','http://127.0.0.1:18100/chat','-n',browser);
+  await delay(800);await rpc('read_screen');
+  const draft='连续操作草稿';
+  const sequence=saveResult('11-sequence',await rpc('perform_steps',{steps:[
+    {action:'tap',target:{text:'测试联系人'},expect_text:'消息输入框'},
+    {action:'type',target:{editable:true,view_id:'message'},text:draft,expect_text:draft},
+  ]}));
+  check('连续操作重新定位联系人和输入框并核验草稿',!sequence.isError&&text(sequence).includes('2/2')&&events.includes('message:'+draft));
+  const blockedSequence=await rpc('perform_steps',{steps:[{action:'tap',target:{text:'发送'}}]});
+  check('连续操作不能绕过发送确认',blockedSequence.isError&&!events.includes('sent:'+draft)&&!run('shell','dumpsys','window','windows').includes('dsh-confirm-card'));
+  const missing=await rpc('perform_steps',{steps:[{action:'tap',target:{text:'不存在的按钮'}},{action:'back'}]});
+  check('连续操作找不到目标时停止后续动作',missing.isError&&text(missing).includes('0/2'));
   run('shell','am','start','-W','-a','android.intent.action.VIEW','-d','http://127.0.0.1:18100/chat-pending','-n',browser);
   await delay(800);await rpc('read_screen');await rpc('tap_text',{text:'测试联系人',scrolls:0});
   const pendingField=await rpc('find_elements',{editable:true,view_id:'message'});
@@ -173,7 +187,7 @@ try{
   await delay(700);if(process.env.DSH_SMOKE_APPROVE==='1')run('shell','input','tap','780','2180');
   await delay(2200);shot('13-progress-plan');
   check('本地模型任务运行中显示面板',run('shell','dumpsys','window','windows').includes('dsh-task-panel'));
-  const completed=await completePending;
+  const completed=saveResult('13-completed',await completePending);
   check('本地模型任务可正常完成',!completed.isError&&text(completed).includes('本地生命周期检查完成'));
   await delay(500);
   check('正常完成后面板自动移除',!run('shell','dumpsys','window','windows').includes('dsh-task-panel'));
@@ -189,10 +203,11 @@ finally{
   try{await rpc('control_stop');}catch{}
   if(original){run('shell','am','force-stop','dev.pocketagent');prefsWrite(original.replace(/<boolean name="settings\.computerLink"[^>]*\/>/g,'').replace(/<string name="settings\.linkToken">[^<]*<\/string>/g,''));}
   if(enabled!==undefined)run('shell','settings','put','secure','enabled_accessibility_services',enabled&&enabled!=='null'?enabled:"''");
+  if(proxy!==undefined){if(proxy&&proxy!=='null')run('shell','settings','put','global','http_proxy',proxy);else {run('shell','settings','put','global','http_proxy',':0');run('shell','settings','delete','global','http_proxy');}}
   try{run('forward','--remove','tcp:18765');}catch{}
   try{run('reverse','--remove','tcp:18100');}catch{}
   server?.close();
   server?.closeAllConnections();
-  writeFileSync(`${out}/results.json`,JSON.stringify({checks,events},null,2),'utf8');
+  writeFileSync(`${out}/results.json`,JSON.stringify({checks,events,timings},null,2),'utf8');
   console.log(`RESULTS ${checks.filter(x=>x.passed).length}/${checks.length}`);
 }

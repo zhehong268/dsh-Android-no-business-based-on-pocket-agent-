@@ -41,6 +41,19 @@ class HttpCallerTest {
         assertEquals(Triple("https://x/y", mapOf("a" to "b"), "{}"), t.calls[0])
     }
 
+    @Test fun networkDiagnosticsNeverEchoAddressesOrKeys() = runTest {
+        val secret="private-address-and-key"
+        for (error in listOf(
+            java.net.UnknownHostException(secret), java.net.SocketTimeoutException(secret),
+            java.net.ConnectException(secret), java.net.UnknownServiceException(secret),
+        )) {
+            val result=failure(HttpCaller(FakeTransport(listOf(error))).post("https://x/y",emptyMap(),"{}"))
+            assertEquals(FailureKind.NETWORK,result.kind)
+            assertFalse(result.message.contains(secret))
+            assertFalse(result.message=="连不上服务商")
+        }
+    }
+
     @Test
     fun statusMapping() = runTest {
         val expected = mapOf(

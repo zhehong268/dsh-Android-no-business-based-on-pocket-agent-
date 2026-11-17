@@ -26,7 +26,14 @@ class HttpCaller(private val transport: HttpTransport) {
             } catch (e: BodyTooLargeException) {
                 return HttpOutcome.Failure(FailureKind.SERVER, "服务商返回的内容太大", null)
             } catch (e: IOException) {
-                HttpOutcome.Failure(FailureKind.NETWORK, "连不上服务商", null)
+                val message = when (e) {
+                    is java.net.UnknownHostException -> "解析不了服务商域名，请检查网络或地址。"
+                    is java.net.SocketTimeoutException -> "连接服务商超时，请检查网络后重试。"
+                    is java.net.ConnectException -> "连接服务商失败，请检查地址、端口或代理。"
+                    is java.net.UnknownServiceException -> "系统不允许当前连接方式，请检查 HTTPS 与代理设置。"
+                    else -> "连不上服务商"
+                }
+                HttpOutcome.Failure(FailureKind.NETWORK, message, null)
             }
 
             if (!isRetryable(failure.kind) || attempt >= BACKOFF_MS.size) return failure

@@ -60,6 +60,6 @@ class SettlerTest {
         settler.onEvent()
         delay(1_000)
         settler.settle()
-        assertEquals(1_300, testScheduler.currentTime)
+        assertEquals(1_000, testScheduler.currentTime)
     }
 }

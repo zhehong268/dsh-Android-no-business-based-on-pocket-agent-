@@ -9,6 +9,15 @@ import org.junit.Test
 import kotlin.test.*
 
 class DirectControlTest {
+    @Test fun directControlDoesNotExposeOrAcceptLocalTaskAutoFinish()=runTest {
+        var calls=0
+        val handler=McpHandler(PhoneControl { _,_->calls++;buildJsonObject {} }) { TaskReply.Refused("unused") }
+        val list=Json.parseToJsonElement(handler.handle("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""")!!).jsonObject["result"]!!.jsonObject["tools"]!!.jsonArray
+        for(tool in list)assertFalse(tool.jsonObject["inputSchema"]!!.jsonObject["properties"]!!.jsonObject.containsKey("finish_if_verified"))
+        val reply=Json.parseToJsonElement(handler.handle("""{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"type","arguments":{"node_id":"a1","text":"草稿","finish_if_verified":true}}}""")!!).jsonObject
+        assertNotNull(reply["error"])
+        assertEquals(0,calls)
+    }
     @Test fun directCallsAreValidatedBeforeThePhoneIsReached()=runTest {
         val calls=mutableListOf<String>()
         val handler=McpHandler(PhoneControl { name,args -> calls+=name;buildJsonObject { put("isError",false) } }) { TaskReply.Refused("unused") }

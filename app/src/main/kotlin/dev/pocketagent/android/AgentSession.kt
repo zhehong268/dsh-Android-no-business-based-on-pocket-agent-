@@ -145,7 +145,7 @@ class AgentSession(
             else -> return null
         }
         return try {
-            Providers.create(ModelCapabilities.normalize(config.copy(model = other)), HttpCaller(OkHttpTransport()))
+            Providers.create(ModelCapabilities.consultant(config.copy(model = other)), HttpCaller(OkHttpTransport()))
         } catch (e: IllegalArgumentException) {
             null
         }
@@ -568,7 +568,10 @@ class AgentSession(
             if (!taskIsLive()) return@withContext TaskReply.Refused("任务没能启动。")
             val end = runner.state.first { it is AgentState.Finished || it is AgentState.Stopped }
             when (end) {
-                is AgentState.Finished -> TaskReply.Done(end.outcome.success, end.outcome.summary)
+                is AgentState.Finished -> TaskReply.Done(end.outcome.success, end.outcome.summary,mapOf(
+                    "model_steps" to end.outcome.stats.steps.toLong(),"native_actions" to end.outcome.stats.actions.toLong(),
+                    "model_ms" to end.outcome.stats.modelMs,"total_ms" to end.outcome.stats.totalMs,
+                    "tokens" to end.outcome.usage.inputTokens+end.outcome.usage.outputTokens))
                 else -> TaskReply.Done(false, "任务在手机上被停止了。")
             }
         } finally {

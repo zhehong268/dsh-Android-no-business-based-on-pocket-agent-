@@ -359,7 +359,7 @@ class OpenAiCompatClientTest {
         val first = m[1].parts()
         assertEquals(listOf("text", "text"), first.map { it.type() })
         assertEquals("Task: do x\n[earlier screen omitted]", first[0].text())
-        assertEquals("[earlier screenshot omitted]", first[1].text())
+        assertEquals("[较早截图已省略；以最新观察为准]", first[1].text())
         val second = m[4].parts()
         assertEquals(listOf("text", "text"), second.map { it.type() })
         assertEquals("two\n[earlier screen omitted]", second[0].text())
@@ -388,7 +388,7 @@ class OpenAiCompatClientTest {
         assertEquals("user", m[4].role())
         val old = m[4].parts()
         assertEquals(listOf("text"), old.map { it.type() })
-        assertEquals("[earlier screenshot omitted]", old.single().text())
+        assertEquals("[较早截图已省略；以最新观察为准]", old.single().text())
         for (msg in m) {
             val c = msg.jsonObject.getValue("content")
             if (c is JsonArray) assertTrue(c.isNotEmpty())
@@ -439,10 +439,10 @@ class OpenAiCompatClientTest {
     }
 
     @Test
-    fun noTrimmingBelowTheThreshold() = runTest {
+    fun screenTextIsKeptBelowTheThresholdWhileImagesStayBounded() = runTest {
         val t = runThreeTurns(contextTokens = 128_000)
         val m = t.requests[2].messages
-        assertEquals(listOf("text", "image_url"), m[1].parts().map { it.type() })
+        assertEquals(listOf("text", "text"), m[1].parts().map { it.type() })
         assertTrue(m[1].parts()[0].text().contains("<screen_data"))
         assertEquals(listOf("text", "image_url"), m[4].parts().map { it.type() })
     }

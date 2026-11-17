@@ -102,7 +102,7 @@ data class ProviderConfig(
     private companion object {
         const val MAX_MODEL_LENGTH = 100
         val CONTEXT_RANGE = 4_000..2_000_000
-        val OUTPUT_RANGE = 512..8_192
+        val OUTPUT_RANGE = 512..131_072
         val EFFORTS = listOf("low", "medium", "high", "xhigh", "max")
         val IPV4 = Regex("""(0|[1-9]\d{0,2})(\.(0|[1-9]\d{0,2})){3}""")
 

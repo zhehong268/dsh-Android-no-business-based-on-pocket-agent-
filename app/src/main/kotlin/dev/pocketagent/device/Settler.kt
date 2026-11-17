@@ -12,7 +12,7 @@ class Settler(
     private val maxMs: Long = 3_000,
 ) {
     @Volatile
-    private var lastEvent = Long.MIN_VALUE
+    private var lastEvent = now()
 
     fun onEvent() {
         lastEvent = now()
@@ -22,7 +22,7 @@ class Settler(
         val start = now()
         while (true) {
             val t = now()
-            val quiet = t - maxOf(lastEvent, start)
+            val quiet = t - lastEvent
             val elapsed = t - start
             if (quiet >= quietMs || elapsed >= maxMs) return
             delay(minOf(quietMs - quiet, maxMs - elapsed))

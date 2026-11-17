@@ -34,6 +34,7 @@ class ConfirmCard(private val context: Context) {
             Gravity.BOTTOM,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
         )
+        params.setTitle("dsh-confirm-card")
         if (attach(outer, params)) {
             card = outer
             // the card slides up and settles

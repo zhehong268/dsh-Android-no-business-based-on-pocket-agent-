@@ -22,7 +22,7 @@ class PocketAccessibilityService : AccessibilityService() {
     /** Events arrive only while a task runs; each one only restarts the settle timer. */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val current = session ?: return
-        current.onEvent()
+        if (event != null && event.packageName?.toString() != packageName) current.onEvent()
         if (event != null) current.onRecordingEvent(event)
     }
 

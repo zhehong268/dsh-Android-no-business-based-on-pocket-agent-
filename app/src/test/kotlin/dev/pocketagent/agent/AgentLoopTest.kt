@@ -699,7 +699,7 @@ class AgentLoopTest {
         var t = 0L
         val llm = FakeLlm(listOf(tap("a1"), done()))
         val outcome = loop(llm, FakeDevice(listOf(start, distinctScreen("x"))), nowMs = { t += 100; t }).run("t", start)
-        assertEquals(TaskStats(steps = 2, modelMs = 200, totalMs = 500), outcome.stats)
+        assertEquals(TaskStats(steps = 2, modelMs = 200, totalMs = 500, actions = 1), outcome.stats)
     }
 
     @Test fun typeWithSubmitReachesTheDevice() = runTest {

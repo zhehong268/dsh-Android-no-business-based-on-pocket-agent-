@@ -119,7 +119,7 @@ class ProviderConfigTest {
         assertFalse(config(contextTokens = 3999).validate().ok)
         assertFalse(config(contextTokens = 2_000_001).validate().ok)
         assertFalse(config(maxOutputTokens = 511).validate().ok)
-        assertFalse(config(maxOutputTokens = 8193).validate().ok)
+        assertFalse(config(maxOutputTokens = 131073).validate().ok)
         assertFalse(config(effort = "ultra").validate().ok)
         assertTrue(config(contextTokens = 4000, maxOutputTokens = 512, effort = "xhigh").validate().ok)
         assertTrue(config(contextTokens = 2_000_000, maxOutputTokens = 8192, effort = "low").validate().ok)

@@ -20,6 +20,7 @@ object Captions {
         ToolCall.ReadScreen -> "正在重新读屏"
         is ToolCall.ReadElement -> "正在读取完整内容"
         is ToolCall.FindElements -> "正在查找候选"
+        is ToolCall.PerformSteps -> "正在连续操作"
         is ToolCall.TapMark -> "正在点击截图编号 ${call.index}"
         is ToolCall.WaitFor -> "正在等待目标出现"
         is ToolCall.Checkpoint -> "正在保存任务进度"

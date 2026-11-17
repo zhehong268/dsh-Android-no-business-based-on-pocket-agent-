@@ -38,13 +38,22 @@ Content-Type: application/json
 
 `find_elements` 可组合 `text`、`role`、`editable`、`view_id` 和容器 `node_id`。找无标签输入框可传 `{"editable":true}`；`tap_text` 支持 `direction:"up"`，默认向下。
 
+已知下一步目标时，可用 `perform_steps` 减少往返；每步按当前页面重新找目标，不携带旧节点编号。最多四步，只支持 `tap`、`type`、`scroll`、`back`、`open_app`。例如打开会话并填写草稿：
+
+```json
+{"steps":[{"action":"tap","target":{"text":"测试联系人"},"expect_text":"消息输入框"},{"action":"type","target":{"editable":true,"view_id":"message"},"text":"明天十点见","expect_text":"明天十点见"}]}
+```
+
+`target` 可组合 `text`、`role`、`editable`、`view_id`。重名、失败、状态未知或需要确认时停止，剩余动作不执行；发送要单独调用。
+本地模型的最终动作可用 `finish_if_verified` 请求核验后收尾。连续操作还必须带 `summary` 和最后一步的 `expect_text`；直接控制仍由 `control_stop` 结束。
+
 上面省略了 MCP 初始化。`b12` 仅作示例，实际使用时要换成刚返回的节点。
 截图点击使用 `tap_mark`，同时传入该截图的 `observation`。重新读屏后，旧编号会失效。
 
 | 用途 | 工具 |
 | --- | --- |
 | 观察 | `read_screen`、`screenshot`、`zoom_screen`、`find_elements`、`read_element` |
-| 点击与输入 | `tap`、`tap_text`、`tap_mark`、`type` |
+| 点击与输入 | `tap`、`tap_text`、`tap_mark`、`type`、`perform_steps` |
 | 手势与导航 | `scroll`、`long_press`、`double_tap`、`drag`、`back`、`home`、`open_app` |
 | 等待 | `wait_for` |
 | 连接管理 | `control_status`、`control_stop` |
@@ -61,3 +70,5 @@ Content-Type: application/json
 
 连接默认关闭，目前没有 TLS。配对码不要写入仓库，8765 端口不要开放到公网。
 手机接口已做设备测试，桌面 MCP 客户端需要自行配置。
+
+`run_task` 结果的 `_meta.dsh` 包含 `model_steps`、`native_actions`、`model_ms`、`total_ms` 和 `tokens`。次数指操作模型决策和手机动作，模型耗时还包括独立复核；总耗时不含最初批准电脑任务的等待。缓存输入已包含在输入用量中，不重复累加。

@@ -12,17 +12,18 @@ import kotlinx.serialization.json.putJsonObject
 
 /** One validated action chosen by the model. */
 sealed interface ToolCall {
-    data class Tap(val nodeId: String?, val x: Int?, val y: Int?, val irreversible: Boolean) : ToolCall
+    data class Tap(val nodeId: String?, val x: Int?, val y: Int?, val irreversible: Boolean, val finishIfVerified:Boolean=false) : ToolCall
 
     /** Finds text on screen, scrolling down when it is not visible yet, then taps it. */
-    data class TapText(val text: String, val scrolls: Int = 3, val irreversible: Boolean = false, val container: String? = null, val direction: Direction = Direction.DOWN) : ToolCall
-    data class TypeText(val nodeId: String, val text: String, val submit: Boolean = false, val mode: String = "replace") : ToolCall
+    data class TapText(val text: String, val scrolls: Int = 3, val irreversible: Boolean = false, val container: String? = null, val direction: Direction = Direction.DOWN, val finishIfVerified:Boolean=false) : ToolCall
+    data class TypeText(val nodeId: String, val text: String, val submit: Boolean = false, val mode: String = "replace", val finishIfVerified:Boolean=false) : ToolCall
     data class Scroll(val direction: Direction, val nodeId: String?) : ToolCall
     data class ZoomScreen(val left:Int,val top:Int,val right:Int,val bottom:Int) : ToolCall
     data object ReadScreen : ToolCall
     data class ReadElement(val nodeId: String) : ToolCall
     data class FindElements(val text: String, val container: String?, val role: String? = null, val editable: Boolean? = null, val viewId: String? = null) : ToolCall
-    data class TapMark(val index: Int, val observation: Int, val irreversible: Boolean) : ToolCall
+    data class PerformSteps(val steps:List<SequenceStep>,val finishIfVerified:Boolean=false,val summary:String?=null) : ToolCall
+    data class TapMark(val index: Int, val observation: Int, val irreversible: Boolean,val finishIfVerified:Boolean=false) : ToolCall
     data class WaitFor(val text: String, val seconds: Int, val checked: Boolean? = null) : ToolCall
     data class Checkpoint(val goal: String, val completed: String, val next: String, val expected: String) : ToolCall
     data class LongPress(val nodeId: String, val irreversible: Boolean = false) : ToolCall
@@ -67,7 +68,7 @@ data class ToolDefinition(val name: String, val description: String, val inputSc
  * type, length and range, and any field that is not in the schema is rejected.
  */
 object Tools {
-    private enum class Kind { STRING, INTEGER, BOOLEAN, CHOICE }
+    private enum class Kind { STRING, INTEGER, BOOLEAN, CHOICE, STEPS }
 
     private class Field(
         val name: String,
@@ -134,6 +135,18 @@ object Tools {
         Field("node_id", Kind.STRING, description, required, min = 1, max = 20)
 
     private val specs: List<Spec> = listOf(
+        Spec("perform_steps","明确的安全步骤优先连续执行 1 到 4 步。下一页节点不必预知，每步会按语义重新找并核验；重名、失败或需确认立即停止。最后一步可自动核验并收尾，省去无意义的下一轮模型等待。发送和删除必须单独调用。",listOf(
+            Field("steps",Kind.STEPS,"动作计划。目标使用文字、类型、可输入状态或资源 id，不能用旧节点或坐标。"),
+            Field("finish_if_verified",Kind.BOOLEAN,"整个用户任务完成时设为 true；最后一步必须提供 expect_text，且须通过本地核验。",required=false),
+            Field("summary",Kind.STRING,"核验后向用户报告的简短结果，自动收尾时必填。",required=false,min=1,max=500),
+        )) { a ->
+            @Suppress("UNCHECKED_CAST")
+            val steps=a["steps"] as List<SequenceStep>
+            val finish=a["finish_if_verified"] as Boolean? ?: false
+            val summary=a["summary"] as String?
+            require(!finish || (summary!=null && steps.last().expected!=null)) { "自动收尾必须有 summary 和最后一步 expect_text" }
+            ToolCall.PerformSteps(steps,finish,summary)
+        },
         Spec(
             "tap",
             "按屏幕数据中的 node_id 点击元素。仅当元素没有 node_id 时才使用 x 和 y，且绝不能同时给出两者。",
@@ -142,6 +155,7 @@ object Tools {
                 Field("x", Kind.INTEGER, "水平像素坐标，必须与 y 一同给出。", required = false, min = 0, max = MAX_COORDINATE),
                 Field("y", Kind.INTEGER, "垂直像素坐标，必须与 x 一同给出。", required = false, min = 0, max = MAX_COORDINATE),
                 Field("irreversible", Kind.BOOLEAN, "如果这次点击会发送、支付、发布或删除任何内容，设为 true。", required = false),
+                Field("finish_if_verified",Kind.BOOLEAN,"仅当本步是最后的文字消息发送时使用；新增正文气泡和空输入框核验成功后直接结束。",required=false),
             ),
         ) { a ->
             val nodeId = a["node_id"] as String?
@@ -152,7 +166,7 @@ object Tools {
             require(!onePointCoordinate && hasCoordinates != (nodeId != null)) {
                 "只能给出 node_id，或给出 x 和 y；不能同时给出，也不能都不给"
             }
-            ToolCall.Tap(nodeId, x, y, a["irreversible"] as Boolean? ?: false)
+            ToolCall.Tap(nodeId, x, y, a["irreversible"] as Boolean? ?: false,a["finish_if_verified"] as Boolean? ?: false)
         },
         Spec(
             "type",
@@ -160,6 +174,7 @@ object Tools {
             listOf(
                 nodeId("可编辑字段的 node_id。", required = true),
                 Field("text", Kind.STRING, "要输入的文本；清空时可为空。", min = 0, max = 4000),
+                Field("finish_if_verified",Kind.BOOLEAN,"本步是任务最后的填写或清空时设为 true；内容核验成功后直接收尾。不适用于 submit。",required=false),
                 Field("mode", Kind.CHOICE, "replace 替换、append 追加、clear 清空，默认 replace。", required = false, choices = listOf("replace", "append", "clear")),
                 Field(
                     "submit",
@@ -173,7 +188,7 @@ object Tools {
             val mode = a["mode"] as String? ?: "replace"
             val text = a["text"] as String
             require(mode == "clear" || text.isNotEmpty()) { "text 必须有 1 到 4000 个字符" }
-            ToolCall.TypeText(a["node_id"] as String,text,a["submit"] as Boolean? ?: false,mode)
+            ToolCall.TypeText(a["node_id"] as String,text,a["submit"] as Boolean? ?: false,mode,a["finish_if_verified"] as Boolean? ?: false)
         },
         Spec(
             "scroll",
@@ -193,8 +208,9 @@ object Tools {
                 Field("scrolls", Kind.INTEGER, "找不到时最多往下滚几次，默认 3。", required = false, min = 0, max = 5),
                 Field("direction", Kind.CHOICE, "查找时滚动方向，默认 down。", required = false, choices = listOf("down", "up")),
                 Field("irreversible", Kind.BOOLEAN, "如果这次点击会发送、支付、发布或删除任何内容，设为 true。", required = false),
+                Field("finish_if_verified",Kind.BOOLEAN,"仅当本步是最后的文字消息发送时使用；新增正文气泡和空输入框核验成功后直接结束。",required=false),
             ),
-        ) { a -> ToolCall.TapText(a["text"] as String, a["scrolls"] as Int? ?: 3, a["irreversible"] as Boolean? ?: false, a["node_id"] as String?, DIRECTIONS.getValue(a["direction"] as String? ?: "down")) },
+        ) { a -> ToolCall.TapText(a["text"] as String, a["scrolls"] as Int? ?: 3, a["irreversible"] as Boolean? ?: false, a["node_id"] as String?, DIRECTIONS.getValue(a["direction"] as String? ?: "down"),a["finish_if_verified"] as Boolean? ?: false) },
         Spec("zoom_screen", "读取并放大屏幕指定区域，小字和图标不清楚时使用；坐标仍是原屏幕像素。", listOf(Field("left",Kind.INTEGER,"左边。",min=0,max=MAX_COORDINATE),Field("top",Kind.INTEGER,"上边。",min=0,max=MAX_COORDINATE),Field("right",Kind.INTEGER,"右边。",min=1,max=MAX_COORDINATE),Field("bottom",Kind.INTEGER,"下边。",min=1,max=MAX_COORDINATE))) { a ->
             val l=a["left"] as Int;val t=a["top"] as Int;val r=a["right"] as Int;val b=a["bottom"] as Int
             require(r>l && b>t) { "区域宽高必须大于零" };ToolCall.ZoomScreen(l,t,r,b)
@@ -211,7 +227,7 @@ object Tools {
             require(listOf("text","role","editable","view_id").any { a.containsKey(it) }) { "至少指定一个查找条件" }
             ToolCall.FindElements(a["text"] as String? ?: "", a["node_id"] as String?,a["role"] as String?,a["editable"] as Boolean?,a["view_id"] as String?)
         },
-        Spec("tap_mark", "点击最近截图编号；必须带该截图的 observation，过期编号会拒绝。", listOf(Field("index", Kind.INTEGER, "图上编号。", min=1, max=100), Field("observation", Kind.INTEGER, "截图观察编号。", min=0, max=Int.MAX_VALUE), Field("irreversible", Kind.BOOLEAN, "不可撤销动作。", required=false))) { a -> ToolCall.TapMark(a["index"] as Int, a["observation"] as Int, a["irreversible"] as Boolean? ?: false) },
+        Spec("tap_mark", "点击最近截图编号；必须带该截图的 observation，过期编号会拒绝。", listOf(Field("index", Kind.INTEGER, "图上编号。", min=1, max=100), Field("observation", Kind.INTEGER, "截图观察编号。", min=0, max=Int.MAX_VALUE), Field("irreversible", Kind.BOOLEAN, "不可撤销动作。", required=false), Field("finish_if_verified",Kind.BOOLEAN,"仅当本步是最后的文字消息发送时使用；核验新增气泡和空输入框后直接结束。",required=false))) { a -> ToolCall.TapMark(a["index"] as Int, a["observation"] as Int, a["irreversible"] as Boolean? ?: false,a["finish_if_verified"] as Boolean? ?: false) },
         Spec("wait_for", "等待文字或控件状态出现，超时返回失败。", listOf(Field("text", Kind.STRING, "目标文字。", min=1, max=100), Field("seconds", Kind.INTEGER, "最长等待秒数。", required=false, min=1, max=20), Field("checked", Kind.BOOLEAN, "等待该控件勾选状态。", required=false))) { a -> ToolCall.WaitFor(a["text"] as String, a["seconds"] as Int? ?: 8, a["checked"] as Boolean?) },
         Spec("checkpoint", "保存任务分解与进度。复杂任务开始及完成子任务后使用。不要写密码或隐私原文。", listOf(Field("goal", Kind.STRING, "当前子目标。", min=1,max=500), Field("completed", Kind.STRING, "已完成摘要。", min=0,max=2000), Field("next", Kind.STRING, "下一步。", min=0,max=500), Field("expected", Kind.STRING, "如何确认本步成功。", min=0,max=500))) { a -> ToolCall.Checkpoint(a["goal"] as String,a["completed"] as String,a["next"] as String,a["expected"] as String) },
         Spec("long_press", "长按一个最新节点，打开菜单或选择。", listOf(nodeId("最新节点。",true),Field("irreversible",Kind.BOOLEAN,"不可撤销动作。",required=false))) { a -> ToolCall.LongPress(a["node_id"] as String,a["irreversible"] as Boolean? ?: false) },
@@ -395,6 +411,7 @@ object Tools {
         val primitive = element as? JsonPrimitive
         val text = primitive?.takeIf { it.isString }?.content
         return when (field.kind) {
+            Kind.STEPS -> SequencePlan.parse(element)
             Kind.STRING -> {
                 require(text != null) { "${field.name} 必须是字符串" }
                 require(text.length in field.min..field.max) { "${field.name} 的长度必须为 ${field.min} 到 ${field.max} 个字符" }
@@ -424,8 +441,9 @@ object Tools {
         putJsonObject("properties") {
             for (field in spec.fields) {
                 putJsonObject(field.name) {
-                    put("type", if (field.kind == Kind.INTEGER) "integer" else if (field.kind == Kind.BOOLEAN) "boolean" else "string")
+                    put("type", if (field.kind == Kind.STEPS) "array" else if (field.kind == Kind.INTEGER) "integer" else if (field.kind == Kind.BOOLEAN) "boolean" else "string")
                     put("description", describe(field))
+                    if (field.kind == Kind.STEPS) put("items",SequencePlan.itemSchema)
                     if (field.kind == Kind.CHOICE) putJsonArray("enum") { field.choices.forEach { add(it) } }
                 }
             }

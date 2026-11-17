@@ -123,7 +123,7 @@ class AccessibilityDevice(
                     is DeviceAction.ReplyToNotification -> ActionResult.Failed("这不是屏幕操作")
                 }
             }
-        }
+        }.also { settler.onEvent() }
     }
     override suspend fun screenshot(): ByteArray? = shot()?.png
 

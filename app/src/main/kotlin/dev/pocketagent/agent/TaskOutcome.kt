@@ -18,4 +18,4 @@ data class TaskOutcome(
  * Where a task's time went: [steps] model calls, [modelMs] of them spent waiting for the model, [totalMs] from the
  * first call to the end. The rest is the phone acting, the screen settling, and the user answering cards.
  */
-data class TaskStats(val steps: Int = 0, val modelMs: Long = 0, val totalMs: Long = 0)
+data class TaskStats(val steps: Int = 0, val modelMs: Long = 0, val totalMs: Long = 0, val actions:Int=0)

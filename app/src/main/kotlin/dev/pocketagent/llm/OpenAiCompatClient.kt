@@ -40,30 +40,46 @@ class OpenAiCompatClient(private val config: ProviderConfig, private val caller:
 
         /** Messages whose request got an empty reply; they go first in the next request. */
         private var pending: List<JsonObject> = emptyList()
+        private var outputBudget = DeepSeekOptions.budget(config)
 
         override val usage: TokenUsage get() = usageTotal
 
         override suspend fun send(turn: Turn): LlmResult {
             val sent = layout(pending + turnMessages(turn))
             if (sent.isEmpty()) return LlmResult.Failed(FailureKind.OTHER, "没有要发送的内容")
-            val messages = trimmed(listOf(systemMessage()) + history + sent)
+            val messages = trimmed(ContextBudget.compactImages(listOf(systemMessage()) + history + sent))
 
-            var outcome = post(messages, !parallelRejected)
-            if (!parallelRejected && outcome is HttpOutcome.Failure && outcome.status == 400) {
-                outcome = post(messages, false)
-                if (outcome is HttpOutcome.Success) parallelRejected = true
+            var budgetRetries = 0
+            while (true) {
+                var outcome = post(messages, !parallelRejected)
+                if (!DeepSeekOptions.applies(config) && !parallelRejected && outcome is HttpOutcome.Failure && outcome.status == 400) {
+                    outcome = post(messages, false)
+                    if (outcome is HttpOutcome.Success) parallelRejected = true
+                }
+                val body = when (outcome) {
+                    is HttpOutcome.Failure -> return LlmResult.Failed(outcome.kind, outcome.message)
+                    is HttpOutcome.Success -> outcome.body
+                }
+                val envelope = runCatching { Json.parseToJsonElement(body) as? JsonObject }.getOrNull()
+                val choice = (envelope?.get("choices") as? JsonArray)?.firstOrNull() as? JsonObject
+                if (DeepSeekOptions.applies(config) && choice?.str("finish_reason") == "length") {
+                    usageTotal += usageOf(envelope["usage"] as? JsonObject)
+                    val next = DeepSeekOptions.expanded(outputBudget)
+                    if (budgetRetries++ >= 1 || next <= outputBudget) return LlmResult.Failed(FailureKind.OTHER,"模型输出仍被截断，未执行截断的工具调用。请缩小子目标后重试。")
+                    outputBudget = next
+                    continue
+                }
+                return parseReply(body, sent)
             }
-            val body = when (outcome) {
-                is HttpOutcome.Failure -> return LlmResult.Failed(outcome.kind, outcome.message)
-                is HttpOutcome.Success -> outcome.body
-            }
-            return parseReply(body, sent)
         }
 
         private suspend fun post(messages: List<JsonObject>, withParallel: Boolean): HttpOutcome {
             val headers = buildMap {
                 put("Content-Type", "application/json")
-                if (config.apiKey.isNotEmpty()) put("Authorization", "Bearer ${config.apiKey}")
+                if (config.apiKey.isNotEmpty()) {
+                    if (DeepSeekOptions.applies(config) && config.authHeader == AUTH_HEADER_DSH) put(AUTH_HEADER_DSH,config.apiKey)
+                    else put("Authorization", "Bearer ${config.apiKey}")
+                }
             }
             val url = config.baseUrl.trimEnd('/') + "/chat/completions"
             return caller.post(url, headers, requestBody(messages, withParallel).toString())
@@ -72,7 +88,11 @@ class OpenAiCompatClient(private val config: ProviderConfig, private val caller:
         private fun requestBody(messages: List<JsonObject>, withParallel: Boolean) = buildJsonObject {
             put("model", config.model)
             // OpenAI's newer models reject max_tokens; everything else still expects it.
-            put(if (config.host == OPENAI_HOST) "max_completion_tokens" else "max_tokens", config.maxOutputTokens)
+            put(if (config.host == OPENAI_HOST) "max_completion_tokens" else "max_tokens", outputBudget)
+            if (DeepSeekOptions.applies(config)) {
+                putJsonObject("thinking") { put("type","enabled") }
+                put("reasoning_effort",DeepSeekOptions.effort(config))
+            }
             put("messages", JsonArray(messages))
             putJsonArray("tools") {
                 for (tool in tools) {
@@ -151,7 +171,7 @@ class OpenAiCompatClient(private val config: ProviderConfig, private val caller:
          * dump and images. Works on a copy; tool, assistant and the latest user messages are never touched.
          */
         private fun trimmed(messages: List<JsonObject>): List<JsonObject> {
-            val estimate = messages.sumOf { it.toString().length } / CHARS_PER_TOKEN
+            val estimate = messages.sumOf { ContextBudget.estimate(it, if (DeepSeekOptions.applies(config)) 1024 else 4096) }
             if (estimate <= config.contextTokens * TRIM_THRESHOLD) return messages
             val lastUser = messages.indexOfLast { it.str("role") == "user" }
             return messages.mapIndexed { i, m -> if (i < lastUser && m.str("role") == "user") stubbed(m) else m }
@@ -196,7 +216,8 @@ class OpenAiCompatClient(private val config: ProviderConfig, private val caller:
             }
 
             val text = contentText(message["content"])
-            if (calls.isEmpty() && text.isEmpty()) {
+            val reasoning = (message["reasoning_content"] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
+            if (calls.isEmpty() && text.isEmpty() && !(DeepSeekOptions.applies(config) && reasoning.isNotEmpty())) {
                 // An empty assistant message is invalid on replay: keep the unsent messages for the next send.
                 pending = sent
                 unanswered = emptyList()
@@ -296,7 +317,7 @@ class OpenAiCompatClient(private val config: ProviderConfig, private val caller:
         const val OPENAI_HOST = "api.openai.com"
         const val IGNORED = "已忽略：每步只做一个动作"
         const val OMITTED = "[earlier screen omitted]"
-        const val SCREENSHOT_OMITTED = "[earlier screenshot omitted]"
+        const val SCREENSHOT_OMITTED = "[较早截图已省略；以最新观察为准]"
         const val CHARS_PER_TOKEN = 3
         const val TRIM_THRESHOLD = 0.7
         val SCREEN_DATA = Regex("<screen_data.*?</screen_data>", RegexOption.DOT_MATCHES_ALL)

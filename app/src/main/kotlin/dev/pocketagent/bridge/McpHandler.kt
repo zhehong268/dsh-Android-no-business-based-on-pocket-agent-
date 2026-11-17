@@ -17,7 +17,7 @@ import kotlinx.serialization.json.putJsonObject
 
 /** How a request from the computer ended. [Refused] means nothing ran. */
 sealed interface TaskReply {
-    data class Done(val success: Boolean, val summary: String) : TaskReply
+    data class Done(val success: Boolean, val summary: String,val metrics:Map<String,Long> = emptyMap()) : TaskReply
     data class Refused(val reason: String) : TaskReply
 }
 
@@ -118,6 +118,7 @@ class McpHandler(private val control: PhoneControl? = null, private val tasks: P
             val definition = controlTools().firstOrNull { it["name"] == JsonPrimitive(name) }
                 ?: return failure(id, INVALID_PARAMS, "Unknown tool")
             if (name in CONTROL_ACTIONS && Tools.parse(name!!,args).isFailure) return failure(id, INVALID_PARAMS, "Invalid tool arguments")
+            if ("finish_if_verified" in args) return failure(id, INVALID_PARAMS, "直接控制请用 control_stop 结束，不使用 finish_if_verified。")
             if (name !in CONTROL_ACTIONS && (args.keys.any { it != "task" } || (name != "control_start" && args.isNotEmpty()))) return failure(id,INVALID_PARAMS,"Unexpected argument")
             if (name == "control_start") {
                 val task = (args["task"] as? JsonPrimitive)?.takeIf { it.isString }?.content
@@ -132,7 +133,9 @@ class McpHandler(private val control: PhoneControl? = null, private val tasks: P
             return failure(id, INVALID_PARAMS, "task must be 1 to $MAX_TASK characters of plain text")
         }
         return when (val reply = tasks.run(task)) {
-            is TaskReply.Done -> success(id, textResult(reply.summary, isError = !reply.success))
+            is TaskReply.Done -> success(id, if(reply.metrics.isEmpty())textResult(reply.summary, isError = !reply.success) else JsonObject(textResult(reply.summary,isError=!reply.success).toMutableMap().apply {
+                put("_meta",buildJsonObject { putJsonObject("dsh"){reply.metrics.forEach { (name,value)->put(name,value) }} })
+            }))
             is TaskReply.Refused -> success(id, textResult(reply.reason, isError = true))
         }
     }
@@ -148,7 +151,11 @@ class McpHandler(private val control: PhoneControl? = null, private val tasks: P
                 }
             } }
         return controls + Tools.definitions.filter { it.name in CONTROL_ACTIONS }.map {
-            buildJsonObject { put("name",it.name); put("description",it.description); put("inputSchema",it.inputSchema) }
+            val schema=JsonObject(it.inputSchema.toMutableMap().apply {
+                val properties=get("properties") as? JsonObject
+                if(properties!=null)put("properties",JsonObject(properties.filterKeys { name->name!="finish_if_verified" }))
+            })
+            buildJsonObject { put("name",it.name); put("description",it.description); put("inputSchema",schema) }
         }
     }
 
@@ -167,7 +174,7 @@ class McpHandler(private val control: PhoneControl? = null, private val tasks: P
     }.toString()
 
     companion object {
-        val CONTROL_ACTIONS = setOf("zoom_screen","read_screen","screenshot","tap","tap_text","tap_mark","type","scroll","back","home","open_app","wait_for","find_elements","read_element","long_press","double_tap","drag")
+        val CONTROL_ACTIONS = setOf("perform_steps","zoom_screen","read_screen","screenshot","tap","tap_text","tap_mark","type","scroll","back","home","open_app","wait_for","find_elements","read_element","long_press","double_tap","drag")
         const val TOOL = "run_task"
         const val MAX_TASK = 2_000
         private const val LATEST = "2025-06-18"
