@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bubble_description">dsh</string>
+    <string name="confirm_title">允许这一步吗？</string>
+    <string name="confirm_action">操作：%1$s</string>
+    <string name="confirm_target">对象：%1$s</string>
+    <string name="confirm_app">应用：%1$s</string>
+    <string name="confirm_will_send">将发送：%1$s</string>
+    <string name="confirm_allow">允许</string>
+    <string name="confirm_decline">不许</string>
+    <string name="task_hint">要我做什么？</string>
+    <string name="task_go">开始</string>
+    <string name="task_cancel">取消</string>
+    <string name="task_empty">先输入一个任务</string>
+    <string name="answer_hint">你的回答</string>
+    <string name="answer_submit">提交</string>
+    <string name="answer_skip">跳过</string>
+    <string name="service_label">dsh</string>
+    <string name="tile_label">问 dsh</string>
+    <string name="link_port_busy">无法连接电脑：端口 8765 已被占用。</string>
+    <string name="recording_started">正在录制。按你的习惯操作，完成后在任务页点「停止」。</string>
+    <string name="recording_failed_title">没有可保存的内容</string>
+    <string name="recording_done_title">已录制流程：%1$s</string>
+    <string name="service_description">只有你从快捷设置里的「问 dsh」磁贴，或者从 dsh 应用里发起任务时，dsh 才会读取屏幕并操作（点击、输入、滚动、打开应用）。读到的内容会发送给你设置好的 AI 服务商。可能发送、付款、发布或删除的操作，它会先问你。没有任务运行时它不接收任何屏幕事件，也不保存任何内容。</string>
+    <string name="service_stopped">dsh 已停止：无障碍被关掉了</string>
+    <string name="launcher_intro">dsh 依靠无障碍服务工作。先在无障碍设置里打开 dsh，再从快捷设置磁贴或应用里给它任务。</string>
+    <string name="launcher_open_settings">打开无障碍设置</string>
+    <string name="phone_unavailable_title">手机不可用</string>
+    <string name="read_failed">读不到屏幕内容，请重试。</string>
+    <string name="notice_title">开始之前</string>
+    <string name="notice_body">1. 你屏幕上的文字，以及智能体需要时截取的屏幕截图，只会直接发给你选择的那家 AI 服务商，不发往别处。没有埋点、没有统计，也没有 dsh 自己的服务器。
+
+2. 任务结束后，屏幕内容不会留下任何记录。
+
+3. 任务运行期间，智能体可以点击和输入。可能发送、付款、发布或删除的操作会先问你；银行、支付、密码管理器和「设置」类应用它不会去操作。这条规则靠关键词判断，措辞特别时可能漏判。
+
+4. 任何时候都可以在任务页点「停止」，正在跑的任务会立刻停下。</string>
+    <string name="notice_accept">我知道了</string>
+    <string name="notice_custom_host">你的屏幕文字会发送到 %1$s。</string>
+    <string name="notice_mic">语音输入用的是你手机自带的语音识别。会优先请求本机识别，但识别器仍可能把你的录音发到云端（手机厂商或 Google）。dsh 自己不保存也不发送录音。这一步是可选的。</string>
+    <string name="mic_needs_setup">先在设置里打开麦克风，才能说话。</string>
+    <string name="mic_listening">正在听…</string>
+    <string name="mic_button_description">说出你的任务</string>
+    <string name="setup_title">设置 dsh</string>
+    <string name="setup_progress">已完成 %1$d / %2$d 步</string>
+    <string name="setup_ready_title">都准备好了</string>
+    <string name="setup_ready_body">从快捷设置里的「问 dsh」磁贴，或者直接在应用里，都能给 dsh 派任务。想改哪一步，点那张卡片上的「修改」。</string>
+    <string name="setup_edit">修改</string>
+    <string name="setup_status_done">完成</string>
+    <string name="setup_status_current">下一步</string>
+    <string name="setup_finish_first">请先完成「%1$s」</string>
+    <string name="setup_step_notice">先读这一段</string>
+    <string name="setup_step_provider">AI 服务商和密钥</string>
+    <string name="setup_step_model">模型</string>
+    <string name="setup_step_accessibility">无障碍</string>
+    <string name="setup_step_microphone">麦克风（可选）</string>
+    <string name="setup_step_test">测试任务</string>
+    <string name="setup_summary_notice">已了解</string>
+    <string name="setup_summary_provider">服务商：%1$s，密钥已保存</string>
+    <string name="setup_summary_model">模型 %1$s 可正常调用工具</string>
+    <string name="setup_summary_accessibility">dsh 已开启</string>
+    <string name="setup_summary_microphone">麦克风已允许</string>
+    <string name="setup_summary_test">测试任务已完成</string>
+    <string name="setup_mic_skipped">已跳过，语音输入关闭</string>
+    <string name="setup_provider_intro">选你已经在用的 AI 服务。密钥会加密存在本机，只发给那一家服务。</string>
+    <string name="setup_provider_custom">其他地址</string>
+    <string name="setup_custom_url_label">OpenAI 兼容接口的基础地址</string>
+    <string name="setup_custom_url_hint">https://llm.example.com/v1</string>
+    <string name="setup_key_hint">API 密钥</string>
+    <string name="setup_key_hint_optional">API 密钥（本地服务可留空）</string>
+    <string name="setup_key_saved">密钥已保存</string>
+    <string name="setup_key_replace">更换密钥</string>
+    <string name="setup_provider_save">保存</string>
+    <string name="setup_host_accept">我信任这个地址</string>
+    <string name="setup_model_intro">按服务商给的写法原样输入模型名，然后测一下。测试只会发一个很小的请求。</string>
+    <string name="setup_model_hint">模型名</string>
+    <string name="setup_model_images">这个模型能看图</string>
+    <string name="setup_model_test">测试模型</string>
+    <string name="setup_accessibility_intro">在无障碍设置里打开 dsh。这样它在任务运行时才能读屏、替你点击。</string>
+    <string name="setup_accessibility_open">打开无障碍设置</string>
+    <string name="setup_greyed_heading">开关是灰的点不动？</string>
+    <string name="setup_app_info">打开应用信息</string>
+    <string name="setup_guidance_fallback">如果开关是灰的，打开 dsh 的应用信息，点右上角三个点，选「允许受限设置」。</string>
+    <string name="setup_mic_allow">允许麦克风</string>
+    <string name="setup_mic_skip">跳过</string>
+    <string name="setup_test_intro">跑一个很小的第一个任务，看看整条链路都通。文字可以自己改。</string>
+    <string name="setup_test_run">运行测试任务</string>
+    <string name="setup_test_needs_service">先在无障碍设置里打开 dsh，测试才能跑。</string>
+</resources>

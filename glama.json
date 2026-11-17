@@ -1,0 +1,20 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": [
+    "zhehong268"
+  ],
+  "name": "dsh Android",
+  "description": "基于 PocketAgent 的中文安卓手机 Agent，支持 DeepSeek 账号登录、读屏操作、任务恢复和经手机批准的 MCP 直接控制。",
+  "type": "mcp_server",
+  "transport": [
+    "http"
+  ],
+  "keywords": [
+    "android",
+    "mobile",
+    "mcp-server",
+    "accessibility",
+    "automation",
+    "agent"
+  ]
+}

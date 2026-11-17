@@ -1,0 +1,71 @@
+{
+  "checks": [
+    {
+      "name": "电脑控制需要手机批准后返回屏幕",
+      "passed": true
+    },
+    {
+      "name": "原生点击经过安全执行链",
+      "passed": true
+    },
+    {
+      "name": "不可靠状态明确标为未知并附图",
+      "passed": true
+    },
+    {
+      "name": "坐标后备触摸实际完成勾选",
+      "passed": true
+    },
+    {
+      "name": "中文输入通过手机工具写入",
+      "passed": true
+    },
+    {
+      "name": "重名联系人返回多个候选",
+      "passed": true
+    },
+    {
+      "name": "重名点击被拒绝",
+      "passed": true
+    },
+    {
+      "name": "精确姓名优先于相似姓名",
+      "passed": true
+    },
+    {
+      "name": "MCP 返回原生图片内容",
+      "passed": true
+    },
+    {
+      "name": "刷新后旧截图编号失效",
+      "passed": true
+    },
+    {
+      "name": "局部放大截图保留原屏幕坐标",
+      "passed": true
+    },
+    {
+      "name": "画布页面自动附图",
+      "passed": true
+    },
+    {
+      "name": "画布操作有可见反馈或风险确认",
+      "passed": true
+    },
+    {
+      "name": "电脑控制可停止",
+      "passed": true
+    },
+    {
+      "name": "停止后不能继续读屏",
+      "passed": true
+    }
+  ],
+  "events": [
+    "checked:true",
+    "input:中文输入测试",
+    "exact",
+    "canvas",
+    "canvas"
+  ]
+}
