@@ -8,7 +8,10 @@ import kotlinx.coroutines.delay
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import java.net.ConnectException
+import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -109,14 +112,30 @@ class McpHttpServerTest {
     }
 
     @Test fun stoppingClosesThePort() {
-        val port = server.boundPort
-        server.stop()
-        val refused = try {
-            Socket("127.0.0.1", port).close()
+        repeat(20) { cycle ->
+            if (cycle > 0) assertTrue(server.start())
+            val port = server.boundPort
+            server.stop()
+            // Closing wakes accept() on its IO dispatcher; the OS may release the listener a little later.
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+            var refused = portRefusesConnection(port)
+            while (!refused && System.nanoTime() < deadline) {
+                Thread.sleep(10)
+                refused = portRefusesConnection(port)
+            }
+            assertTrue(refused, "停止后端口 $port 未在 2 秒内关闭，第 ${cycle + 1} 次启停")
+        }
+    }
+
+    private fun portRefusesConnection(port: Int): Boolean = Socket().use { probe ->
+        probe.bind(InetSocketAddress("127.0.0.1", 0))
+        // Linux can connect an ephemeral socket to itself. Such a probe does not test the server.
+        if (probe.localPort == port) return@use false
+        try {
+            probe.connect(InetSocketAddress("127.0.0.1", port), 1_000)
             false
-        } catch (e: java.io.IOException) {
+        } catch (_: ConnectException) {
             true
         }
-        assertTrue(refused)
     }
 }
