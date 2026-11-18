@@ -52,7 +52,7 @@ class OpenAiCompatClient(private val config: ProviderConfig, private val caller:
             var budgetRetries = 0
             while (true) {
                 var outcome = post(messages, !parallelRejected)
-                if (!DeepSeekOptions.applies(config) && !parallelRejected && outcome is HttpOutcome.Failure && outcome.status == 400) {
+                if (tools.isNotEmpty() && !DeepSeekOptions.applies(config) && !parallelRejected && outcome is HttpOutcome.Failure && outcome.status == 400) {
                     outcome = post(messages, false)
                     if (outcome is HttpOutcome.Success) parallelRejected = true
                 }
@@ -94,7 +94,7 @@ class OpenAiCompatClient(private val config: ProviderConfig, private val caller:
                 put("reasoning_effort",DeepSeekOptions.effort(config))
             }
             put("messages", JsonArray(messages))
-            putJsonArray("tools") {
+            if(tools.isNotEmpty())putJsonArray("tools") {
                 for (tool in tools) {
                     add(
                         buildJsonObject {
@@ -108,8 +108,10 @@ class OpenAiCompatClient(private val config: ProviderConfig, private val caller:
                     )
                 }
             }
-            put("tool_choice", "auto")
-            if (withParallel) put("parallel_tool_calls", false)
+            if(tools.isNotEmpty()) {
+                put("tool_choice", "auto")
+                if (withParallel) put("parallel_tool_calls", false)
+            }
         }
 
         private fun systemMessage() = buildJsonObject {

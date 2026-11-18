@@ -52,6 +52,7 @@ interface TaskScreenHost {
     fun completeAnswer(answer: String?)
     fun startSetupTask(text: String)
     fun resumeTask(text:String, previousSummary:String="")
+    fun isPhoneTaskRunning():Boolean
 
     /** Starts recording the user's own taps as a playbook draft; the bubble becomes the stop button. */
     fun startRecording()

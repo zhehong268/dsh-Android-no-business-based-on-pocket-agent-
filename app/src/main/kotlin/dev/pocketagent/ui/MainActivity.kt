@@ -367,6 +367,8 @@ class MainActivity : ThemedActivity() {
                 }
             },
             onRun = { text -> runTask(text) },
+            onChat = { if(TaskScreenHost.current?.isPhoneTaskRunning()==true)Toast.makeText(this,"手机任务仍在运行，请先停止或等它结束。",Toast.LENGTH_SHORT).show()
+                else startActivity(Intent(this,ChatActivity::class.java)) },
             micGranted = { micOn() },
             onNeedMic = { requestMic() },
         )

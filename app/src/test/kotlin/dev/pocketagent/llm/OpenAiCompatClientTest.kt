@@ -109,6 +109,15 @@ class OpenAiCompatClientTest {
         assertFalse(t.requests.single().headers.keys.any { it.equals("Authorization", ignoreCase = true) })
     }
 
+    @Test fun plainChatOmitsToolsAndReplaysTheAssistantAsAssistant()=runTest {
+        val t=FakeTransport(listOf(HttpResponse(200,emptyMap(),"""{"choices":[{"message":{"role":"assistant","content":"42"},"finish_reason":"stop"}]}""")))
+        val s=OpenAiCompatClient(config(),HttpCaller(t)).newSession("答疑",emptyList())
+        assertEquals("42",(s.send(Turn("17+25")) as LlmResult.NoCall).text)
+        s.send(Turn("减去2"))
+        assertTrue(t.requests.all { "tools" !in it.body && "tool_choice" !in it.body && "parallel_tool_calls" !in it.body })
+        assertEquals(listOf("system","user","assistant","user"),roles(t.requests.last()))
+    }
+
     @Test
     fun strictIsNeverSent() = runTest {
         val t = FakeTransport(listOf(reply("tool_calls")))

@@ -252,6 +252,7 @@ class AgentSession(
      * what gets read, then do what a bubble tap does.
      */
     fun startFromTile() {
+        if(dev.pocketagent.ui.ChatActivity.visible) { Toast.makeText(service,"请先退出聊天答疑，再发起手机任务。",Toast.LENGTH_SHORT).show();return }
         if (closed || taskIsLive() || recorder != null) return
         val shade = if (Build.VERSION.SDK_INT >= 31) {
             AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE
@@ -546,6 +547,8 @@ class AgentSession(
         return if (body.isEmpty()) SPEECH_UNAVAILABLE_NOTE else "$body\n\n$SPEECH_UNAVAILABLE_NOTE"
     }
 
+    override fun isPhoneTaskRunning()=taskIsLive()
+
     private fun taskIsLive(): Boolean {
         if (closed) return false
         val state = runner.state.value
@@ -585,6 +588,7 @@ class AgentSession(
      * like any other task, so the safety gate and the confirmation of anything that sends, calls or pays still apply.
      */
     private suspend fun runFromComputer(task: String): TaskReply = withContext(Dispatchers.Main) {
+        if(dev.pocketagent.ui.ChatActivity.visible)return@withContext TaskReply.Refused("聊天答疑正在前台，请先退出聊天。")
         if (closed) return@withContext TaskReply.Refused("dsh 正在停止。")
         if (remoteInFlight || taskIsLive() || recorder != null || tapJob?.isActive == true || logic.taskScreenOpen) {
             return@withContext TaskReply.Refused("手机正忙，做不了这件事。")
@@ -641,7 +645,7 @@ class AgentSession(
         }
         if (name == "control_start") {
             val client=withContext(Dispatchers.Main) {
-                if (closed || taskIsLive() || remoteInFlight || recorder != null || tapJob?.isActive == true || logic.taskScreenOpen || keyguard?.isKeyguardLocked == true) return@withContext null
+                if (closed || dev.pocketagent.ui.ChatActivity.visible || taskIsLive() || remoteInFlight || recorder != null || tapJob?.isActive == true || logic.taskScreenOpen || keyguard?.isKeyguardLocked == true) return@withContext null
                 remoteInFlight=true
                 try {
                     val task=(args["task"] as JsonPrimitive).content

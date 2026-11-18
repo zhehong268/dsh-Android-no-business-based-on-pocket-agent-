@@ -32,6 +32,7 @@ data class HomeState(
     val recent: List<RecentItem>,
     val usage: String?,
     val onRun: (String) -> Unit = {},
+    val onChat:()->Unit = {},
     val shortcuts: List<String> = DefaultShortcuts,
     val editingShortcuts: Boolean = false,
     val onEditShortcuts: () -> Unit = {},
@@ -238,6 +239,8 @@ object Screens {
             )
             add(banner, Kit.lp().apply { bottomMargin = dp(c, 14) })
         }
+
+        add(Kit.secondary(c,"聊天答疑",50,state.onChat),Kit.lp().apply { bottomMargin=dp(c,14) })
 
         // composer: the hero. The send button wakes up (grey to orange, with a pop) once there is something to send.
         val composer = Kit.vstack(c).apply {
@@ -566,7 +569,7 @@ object Screens {
         p.addView(Kit.group(c, listOf(
             Kit.row(c, "屏幕内容", "只在任务运行时读取，任务结束就丢弃", colorTile(c, R.drawable.ic_doc, R.color.pa_t_gray), null, 64),
             Kit.row(c, "发给了谁", "只有你设置的 AI 服务商", colorTile(c, R.drawable.ic_doc, R.color.pa_t_gray), null, 64),
-            Kit.row(c, "本机保存", "服务商配置、快捷指令、任务记录、答题卡", colorTile(c, R.drawable.ic_doc, R.color.pa_t_gray), null, 64),
+            Kit.row(c, "本机保存", "服务商配置、快捷指令、任务记录和聊天记录", colorTile(c, R.drawable.ic_doc, R.color.pa_t_gray), null, 64),
             Kit.row(c, "不保存", "屏幕原文、截图、密码与验证码", colorTile(c, R.drawable.ic_doc, R.color.pa_t_gray), null, 64),
         ), 60), Kit.lp().apply { topMargin = dp(c, 14) })
         p.addView(Kit.footnote(c, "任务记录随时可以在设置里关闭或清空。"))
@@ -773,7 +776,7 @@ object Screens {
         val card = Kit.card(c, 22, 18)
         listOf(
             "直接发送给你的 AI 服务。" to "你屏幕上的文字，必要时加上截图，不会发往别处。",
-            "屏幕内容不会被保存。" to "任务结束后，只保留你输入的任务和执行结果。",
+            "屏幕内容不会被保存。" to "任务与聊天记录保存在本机，可以清除；聊天问题和上下文会发给设置中的模型。",
             "它会先问过你。" to "任何发送、付款、发布或删除都需要你同意，银行和密码类应用一律跳过。",
             "随时可以叫停。" to "在任务页点「停止」，它立刻停下。",
         ).forEachIndexed { i, (b, rest) ->

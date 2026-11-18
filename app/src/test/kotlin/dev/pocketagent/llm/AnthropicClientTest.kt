@@ -27,6 +27,15 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AnthropicClientTest {
+    @Test fun plainChatOmitsToolsAndKeepsNativeAssistantHistory()=runTest {
+        val response=HttpResponse(200,emptyMap(),"""{"content":[{"type":"text","text":"42"}],"stop_reason":"end_turn"}""")
+        val t=FakeTransport(listOf(response))
+        val s=AnthropicClient(config(),HttpCaller(t)).newSession("答疑",emptyList())
+        assertEquals("42",(s.send(Turn("17+25")) as LlmResult.NoCall).text)
+        s.send(Turn("减去2"))
+        assertTrue(t.requests.all { "tools" !in it.body && "tool_choice" !in it.body })
+        assertEquals(listOf("user","assistant","user"),t.requests.last().messages.map { it.jsonObject.getValue("role").jsonPrimitive.content })
+    }
     private class Recorded(val url: String, val headers: Map<String, String>, val rawBody: String) {
         val body: JsonObject = Json.parseToJsonElement(rawBody).jsonObject
         val messages: JsonArray get() = body.getValue("messages").jsonArray

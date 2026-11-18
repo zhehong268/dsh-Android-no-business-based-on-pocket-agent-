@@ -122,7 +122,7 @@ class AnthropicClient(private val config: ProviderConfig, private val caller: Ht
                     },
                 )
             }
-            putJsonArray("tools") {
+            if(tools.isNotEmpty())putJsonArray("tools") {
                 for (tool in tools) {
                     add(
                         buildJsonObject {
@@ -134,7 +134,7 @@ class AnthropicClient(private val config: ProviderConfig, private val caller: Ht
                     )
                 }
             }
-            putJsonObject("tool_choice") {
+            if(tools.isNotEmpty())putJsonObject("tool_choice") {
                 put("type", "auto")
                 put("disable_parallel_tool_use", true)
             }

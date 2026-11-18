@@ -71,6 +71,9 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".ui.ChatActivity" android:exported="false"
+            android:windowSoftInputMode="adjustResize" android:theme="@style/Theme.PocketAgent.App" />
+
         <!-- The older provider, key and accessibility steps, opened from the app until they are redrawn. -->
         <activity
             android:name=".ui.SetupActivity"

@@ -12,10 +12,10 @@ const release=lockPhone(serial);
 const out=process.env.DSH_TEST_OUT || fileURLToPath(new URL('../build/device-smoke',import.meta.url));
 mkdirSync(out,{recursive:true});
 function run(...args){const r=spawnSync(adb,['-s',serial,...args],{encoding:'utf8',timeout:30000});if(r.status!==0)throw Error(`adb ${args.slice(0,3).join(' ')}: ${r.stderr}`);return r.stdout;}
-function prefsWrite(xml,file='pocketagent_setup'){assert.ok(['pocketagent_setup','dsh_progress'].includes(file));run('shell','run-as','dev.pocketagent','rm','-f',`shared_prefs/${file}.xml.bak`);const r=spawnSync(adb,['-s',serial,'shell','run-as','dev.pocketagent','sh','-c',`'cat > shared_prefs/${file}.xml'`],{input:xml,encoding:'utf8',timeout:10000});if(r.status!==0)throw Error('cannot write test preferences');}
+function prefsWrite(xml,file='pocketagent_setup'){assert.ok(['pocketagent_setup','dsh_progress','dsh_chat'].includes(file));run('shell','run-as','dev.pocketagent','rm','-f',`shared_prefs/${file}.xml.bak`);const r=spawnSync(adb,['-s',serial,'shell','run-as','dev.pocketagent','sh','-c',`'cat > shared_prefs/${file}.xml'`],{input:xml,encoding:'utf8',timeout:10000});if(r.status!==0)throw Error('cannot write test preferences');}
 function shot(name){const r=spawnSync(adb,['-s',serial,'exec-out','screencap','-p'],{timeout:10000});if(r.status!==0)throw Error('screenshot failed');writeFileSync(`${out}/${name}.png`,r.stdout);}
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
-let original,progressBefore,enabled,proxy,token=randomBytes(24).toString('hex'),counter=0,server,modelRequests=0,failModel=false,modelResponder=null;
+let original,progressBefore,chatBefore,enabled,proxy,token=randomBytes(24).toString('hex'),counter=0,server,modelRequests=0,failModel=false,modelResponder=null;
 const checks=[],events=[],timings=[];
 async function rpc(name,args={}){const started=performance.now();const r=await fetch('http://127.0.0.1:18765/mcp',{method:'POST',headers:{'content-type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({jsonrpc:'2.0',id:++counter,method:'tools/call',params:{name,arguments:args}}),signal:AbortSignal.timeout(140000)});assert.equal(r.status,200,`${name} HTTP ${r.status}`);const data=await r.json();if(data.error)throw Error(`${name}: ${JSON.stringify(data.error)}`);timings.push({name,ms:Math.round(performance.now()-started),interactive:name==='control_start'||name==='run_task'||(name==='tap_text'&&args.text==='发送')});return data.result;}
 function text(result){return result.content.filter(x=>x.type==='text').map(x=>x.text).join('\n');}
@@ -34,6 +34,8 @@ try{
   run('shell','settings','put','secure','enabled_accessibility_services',without||"''");await delay(450);
   run('shell','am','force-stop','dev.pocketagent');
   try{progressBefore=run('shell','run-as','dev.pocketagent','cat','shared_prefs/dsh_progress.xml')}catch{progressBefore=null;}
+  try{chatBefore=run('shell','run-as','dev.pocketagent','cat','shared_prefs/dsh_chat.xml')}catch{chatBefore=null;}
+  run('shell','run-as','dev.pocketagent','rm','-f','shared_prefs/dsh_chat.xml','shared_prefs/dsh_chat.xml.bak');
   run('shell','run-as','dev.pocketagent','rm','-f','shared_prefs/dsh_progress.xml','shared_prefs/dsh_progress.xml.bak');
   try { original=run('shell','run-as','dev.pocketagent','cat','shared_prefs/pocketagent_setup.xml'); }
   catch { original='<?xml version="1.0" encoding="utf-8"?><map></map>'; run('shell','run-as','dev.pocketagent','mkdir','-p','shared_prefs'); }
@@ -74,6 +76,10 @@ try{
     let body='';req.on('data',chunk=>{body+=chunk});req.on('end',()=>setTimeout(()=>{
       const scripted=modelResponder?.(JSON.parse(body));
       if(failModel||scripted?.failure){res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'Local fixture error',type:'invalid_request_error'}}));return;}
+      if(typeof scripted?.text==='string') {
+        const timer=setTimeout(()=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({choices:[{message:{role:'assistant',content:scripted.text},finish_reason:'stop'}],usage:{prompt_tokens:1,completion_tokens:1}}));},scripted.delayMs||0);
+        res.once('close',()=>clearTimeout(timer));return;
+      }
       const first=++modelRequests===1;
       const name=scripted?.name||(first?'checkpoint':'done');
       const args=scripted?.args||(first?{goal:'核对本地任务面板',completed:'观察页面',next:'保存测试结果',expected:'任务结束后面板消失'}:{summary:'本地生命周期检查完成',success:true});
@@ -220,6 +226,10 @@ try{
       await resumeSpeedCases({run,rpc,check,saveResult,shot,out,setResponder:fn=>{modelResponder=fn;failModel=false;modelRequests=0;}});
     }
   }
+  if(process.env.DSH_CHAT_QA==='1') {
+    const {chatCases}=await import('./chat-cases.mjs');
+    await chatCases({run,check,shot,out,setResponder:fn=>{modelResponder=fn;failModel=false;modelRequests=0;}});
+  }
 }catch(e){checks.push({name:'device run',passed:false,error:e.message});console.error(e.stack);process.exitCode=1;}
 finally{
   // Restore the emulator's settings in memory; no account token is written to the report.
@@ -230,6 +240,8 @@ finally{
     run('shell','am','force-stop','dev.pocketagent');prefsWrite(original.replace(/<boolean name="settings\.computerLink"[^>]*\/>/g,'').replace(/<string name="settings\.linkToken">[^<]*<\/string>/g,''));
     if(progressBefore!=null)prefsWrite(progressBefore,'dsh_progress');
     else if(progressBefore===null)run('shell','run-as','dev.pocketagent','rm','-f','shared_prefs/dsh_progress.xml','shared_prefs/dsh_progress.xml.bak');
+    if(chatBefore!=null)prefsWrite(chatBefore,'dsh_chat');
+    else if(chatBefore===null)run('shell','run-as','dev.pocketagent','rm','-f','shared_prefs/dsh_chat.xml','shared_prefs/dsh_chat.xml.bak');
   }
   if(enabled!==undefined)run('shell','settings','put','secure','enabled_accessibility_services',enabled&&enabled!=='null'?enabled:"''");
   if(proxy!==undefined){if(proxy&&proxy!=='null')run('shell','settings','put','global','http_proxy',proxy);else {run('shell','settings','put','global','http_proxy',':0');run('shell','settings','delete','global','http_proxy');}}
