@@ -87,4 +87,12 @@ class HistoryStoreTest {
         val s = HistoryStore(raw) { 9_000 }
         assertEquals(listOf("ok"), s.all().map { it.task })
     }
+
+    @Test fun aFailedTaskKeepsTheWholeOriginalGoalForResume() {
+        val task="给联系人发消息\n"+"正文 ".repeat(180)+"\u001F\u001E"
+        store.add(task,false,"请求中断",0,0)
+        val entry=store.all().single()
+        assertTrue(entry.task.length<=HistoryStore.MAX_TASK)
+        assertEquals(task.trim(),entry.resumeTask)
+    }
 }

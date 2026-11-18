@@ -243,7 +243,8 @@ class MainActivity : ThemedActivity() {
         return Screens.activityDetail(
             this, nav,
             HistoryFormat.detail(entry, System.currentTimeMillis(),
-                onRun = { runTask(entry.task) },
+                onRun = { if(entry.ok)runTask(entry.task) else TaskScreenHost.current?.resumeTask(entry.resumeTask ?: entry.task,entry.summary)
+                    ?: Toast.makeText(this,"请先开启 dsh 无障碍服务。",Toast.LENGTH_LONG).show() },
                 onDelete = {
                     history.remove(entry.id)
                     shell.reset("activity", Shell.Transition.FADE)
@@ -329,7 +330,7 @@ class MainActivity : ThemedActivity() {
         val attention = when {
             eval.isReady && dev.pocketagent.agent.ProgressStore(dev.pocketagent.android.PrefsKeyValueStore(getSharedPreferences("dsh_progress", MODE_PRIVATE))).load() != null -> {
                 val pending = dev.pocketagent.agent.ProgressStore(dev.pocketagent.android.PrefsKeyValueStore(getSharedPreferences("dsh_progress", MODE_PRIVATE))).load()!!
-                Attention("有未完成任务", pending.goal.ifBlank { pending.task }.take(150), "继续任务") { runTask(pending.task) }
+                Attention("有未完成任务", pending.goal.ifBlank { pending.task }.take(150), "继续任务") { TaskScreenHost.current?.resumeTask(pending.task) }
             }
             eval.isReady -> null
             current == SetupStep.ACCESSIBILITY && eval.of(SetupStep.MODEL_CHECK).status == StepStatus.DONE ->
@@ -513,6 +514,9 @@ class MainActivity : ThemedActivity() {
         /** The visible instance, so a task that ends while we are open can refresh the list underneath it. */
         @Volatile
         private var live: MainActivity? = null
+
+        /** Resume belongs in the original app, including records created before package tracking existed. */
+        internal fun leaveForTask() { live?.takeIf { resumedNow }?.moveTaskToBack(true) }
 
         /** Called after a task is saved: the Activity tab is correct without waiting for a resume. */
         fun noticeHistoryChanged() {

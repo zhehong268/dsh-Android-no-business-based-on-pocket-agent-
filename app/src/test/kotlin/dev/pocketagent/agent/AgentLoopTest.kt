@@ -132,7 +132,8 @@ class AgentLoopTest {
     @Test fun stuckScreenStopsTask() = runTest {
         // The same content every time, but each observation gets new node ids, as on a real phone.
         fun same(letter: Char) = screenOf(node("${letter}1", role = "button", text = "Next", clickable = true))
-        val llm = FakeLlm(listOf(tap("a1"), tap("b1"), tap("b1"), tap("b1"), tap("b1")))
+        // The local post-action probes advance observations through e; the model must use that fresh id.
+        val llm = FakeLlm(listOf(tap("a1")) + List(4) { tap("e1") })
         val device = FakeDevice(listOf(same('b'), same('c'), same('d'), same('e'), same('f')))
         val outcome = loop(llm, device).run("tap", same('a'))
         assertEquals(EndReason.STUCK, outcome.reason)
@@ -155,7 +156,7 @@ class AgentLoopTest {
 
     @Test fun stuckOnAReadableScreenKeepsTheGenericMessage() = runTest {
         fun same(letter: Char) = screenOf(node("${letter}1", role = "button", text = "Next", clickable = true))
-        val llm = FakeLlm(listOf(tap("a1"), tap("b1"), tap("b1"), tap("b1"), tap("b1")))
+        val llm = FakeLlm(listOf(tap("a1")) + List(4) { tap("e1") })
         val device = FakeDevice(listOf(same('b'), same('c'), same('d'), same('e'), same('f')))
         val outcome = loop(llm, device).run("tap", same('a'))
         assertEquals("执行 3 次操作后屏幕仍无变化。", outcome.summary)

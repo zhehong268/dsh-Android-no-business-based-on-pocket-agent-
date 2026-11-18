@@ -35,6 +35,7 @@ import dev.pocketagent.device.DeviceUnavailable
 import dev.pocketagent.device.Screen
 import dev.pocketagent.device.ScreenSerializer
 import dev.pocketagent.device.Settler
+import dev.pocketagent.device.ActionResult
 import dev.pocketagent.llm.HttpCaller
 import dev.pocketagent.llm.LlmClient
 import dev.pocketagent.llm.OkHttpTransport
@@ -297,6 +298,12 @@ class AgentSession(
     }
 
     override fun startTask(text: String, spoken: Boolean) {
+        if(ProgressStore.isContinuation(text)) {
+            savedScreen=null;logic.taskScreenOpen=false
+            val pending=progress.load()
+            if(pending!=null)resumeTask(pending.task) else Toast.makeText(service,"没有可继续的未完成任务。",Toast.LENGTH_SHORT).show()
+            return
+        }
         logic.taskScreenOpen = false
         val screen = savedScreen
         savedScreen = null
@@ -365,13 +372,19 @@ class AgentSession(
 
     /** The test task of the setup screen: go Home, read the settled screen, run the task there. */
     override fun startSetupTask(text: String) {
+        if(ProgressStore.isContinuation(text)) {
+            val pending=progress.load()
+            if(pending!=null)resumeTask(pending.task) else Toast.makeText(service,"没有可继续的未完成任务。",Toast.LENGTH_SHORT).show()
+            return
+        }
         val task = text.trim()
+        if(progress.load(task)!=null) { resumeTask(task);return }
         if (closed || remoteInFlight || task.isEmpty() || task.length > TaskInputActivity.MAX_TEXT || taskIsLive()) return
         val client = currentClient() ?: return
         scope.launch {
             val screen = try {
                 // A resumed task must keep the user's current app; a fresh task starts at Home.
-                if (progress.load()?.task != task) device.perform(DeviceAction.Home)
+                if (progress.load(task) == null) device.perform(DeviceAction.Home)
                 device.readScreen()
             } catch (e: CancellationException) {
                 throw e
@@ -383,6 +396,36 @@ class AgentSession(
                 return@launch
             }
             withContext(Dispatchers.Main) { if (!closed) begin(task, screen, client, fromSetup = true) }
+        }
+    }
+
+    override fun resumeTask(text:String,previousSummary:String) {
+        val task=text.trim()
+        if(closed || remoteInFlight || taskIsLive() || tapJob?.isActive==true || task.isBlank())return
+        val client=currentClient() ?: return
+        val saved=progress.load(task) ?: dev.pocketagent.agent.TaskProgress(task,
+            next="核对上次结果后完成剩余任务，不从头重复操作。",trail=previousSummary.take(2_000),uncertainAction=true,
+            pendingMessage=Regex("发送.*(不明|未核验|未确认)|可能已发送").containsMatchIn(previousSummary))
+        progress.save(saved)
+        summaryCard.close();savedScreen=null;logic.taskScreenOpen=false
+        tapJob=scope.launch {
+            try {
+                val fromApp=MainActivity.resumedNow
+                withContext(Dispatchers.Main) { MainActivity.leaveForTask() }
+                var screen=device.readScreenFast()
+                if(saved.packageName.isNotBlank() && (fromApp || screen.packageName!=saved.packageName)) {
+                    // Exact package launch preserves its existing task stack; never reset the app or the goal.
+                    val restored=device.restoreApp(saved.packageName)
+                    if(restored is ActionResult.Failed)throw DeviceUnavailable(restored.reason)
+                    screen=device.readScreen()
+                } else if(screen.packageName.isBlank()) {
+                    device.perform(DeviceAction.Back)
+                    screen=device.readScreen()
+                }
+                withContext(Dispatchers.Main) { if(!closed)begin(task,screen,client,fromSetup=false) }
+            } catch(e:CancellationException) { throw e }
+            catch(e:DeviceUnavailable) { withContext(Dispatchers.Main) { tapFailed(e.reason) } }
+            catch(_:RuntimeException) { withContext(Dispatchers.Main) { tapFailed("无法恢复任务页面，请打开原应用后继续任务。") } }
         }
     }
 

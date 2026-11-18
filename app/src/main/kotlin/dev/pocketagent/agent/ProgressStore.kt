@@ -2,6 +2,8 @@ package dev.pocketagent.agent
 
 import dev.pocketagent.setup.KeyValueStore
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 
 @Serializable
@@ -16,13 +18,29 @@ data class TaskProgress(
     val packageName: String = "",
     val uncertainAction: Boolean = false,
     val pendingMessage: Boolean = false,
+    val messageReceipt: PendingMessageReceipt? = null,
 )
 
 /** Private app storage, independent of SAF. No screen dumps, screenshots, keys or reasoning are persisted. */
 class ProgressStore(private val store: KeyValueStore) {
     private val json = Json { ignoreUnknownKeys = true }
     fun load(): TaskProgress? = try { store.getString(KEY)?.let { json.decodeFromString<TaskProgress>(it) } } catch (_: Exception) { null }
-    fun save(progress: TaskProgress) { store.putString(KEY, json.encodeToString(TaskProgress.serializer(), progress)) }
-    fun clear() { store.putString(KEY, null) }
-    companion object { const val KEY = "task.progress.v1" }
+    private fun archived():List<TaskProgress> = try { store.getString(ARCHIVE)?.let { json.decodeFromString<List<TaskProgress>>(it) }.orEmpty() } catch(_:Exception) { emptyList() }
+    fun load(task:String):TaskProgress? = load()?.takeIf { it.task==task } ?: archived().firstOrNull { it.task==task }
+    fun save(progress: TaskProgress) {
+        val entries=(listOfNotNull(load())+archived()).filter { it.task!=progress.task }.distinctBy { it.task }.take(11)
+        store.putString(ARCHIVE,json.encodeToString(listOf(progress)+entries))
+        store.putString(KEY, json.encodeToString(TaskProgress.serializer(), progress))
+    }
+    fun clear(task:String?=null) {
+        val target=task ?: load()?.task
+        val remaining=archived().filter { it.task!=target }
+        store.putString(ARCHIVE,json.encodeToString(remaining))
+        if(task==null || load()?.task==target)store.putString(KEY,remaining.firstOrNull()?.let { json.encodeToString(it) })
+    }
+    companion object {
+        const val KEY = "task.progress.v1"
+        private const val ARCHIVE = "task.progress.recent.v1"
+        fun isContinuation(text:String)=text.trim().trimEnd('。','！','!') in setOf("继续","继续任务","继续执行","接着做","继续上个任务")
+    }
 }

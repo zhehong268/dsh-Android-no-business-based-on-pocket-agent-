@@ -1,5 +1,9 @@
 package dev.pocketagent.setup
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
+
 /** One finished task. Only what the user typed and how it went: never anything that was on the screen. */
 data class HistoryEntry(
     val id: Long,
@@ -9,6 +13,7 @@ data class HistoryEntry(
     val startedAt: Long,
     val durationMs: Long,
     val tokens: Long,
+    val resumeTask: String? = null,
 )
 
 /**
@@ -40,6 +45,7 @@ class HistoryStore(private val store: KeyValueStore, private val now: () -> Long
             startedAt = startedAt,
             durationMs = (ended - startedAt).coerceAtLeast(0),
             tokens = tokens.coerceAtLeast(0),
+            resumeTask = if(ok)null else task.trim().take(2_000),
         )
         write((listOf(entry) + all()).take(MAX_ENTRIES))
         return entry
@@ -54,11 +60,11 @@ class HistoryStore(private val store: KeyValueStore, private val now: () -> Long
     }
 
     private fun serialize(e: HistoryEntry) =
-        listOf(e.id, if (e.ok) 1 else 0, e.startedAt, e.durationMs, e.tokens, e.task, e.summary).joinToString(FIELD.toString())
+        listOf(e.id, if (e.ok) 1 else 0, e.startedAt, e.durationMs, e.tokens, e.task, e.summary, Json.encodeToString(e.resumeTask)).joinToString(FIELD.toString())
 
     private fun parse(line: String): HistoryEntry? {
         val p = line.split(FIELD)
-        if (p.size != 7) return null
+        if (p.size !in 7..8) return null
         return HistoryEntry(
             id = p[0].toLongOrNull() ?: return null,
             ok = p[1] == "1",
@@ -67,6 +73,7 @@ class HistoryStore(private val store: KeyValueStore, private val now: () -> Long
             tokens = p[4].toLongOrNull() ?: return null,
             task = p[5],
             summary = p[6],
+            resumeTask = p.getOrNull(7)?.let { try { Json.decodeFromString<String?>(it) } catch(_:Exception) { null } },
         )
     }
 

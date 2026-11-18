@@ -22,6 +22,11 @@ class HistoryFormatTest {
         assertEquals("已中止", HistoryFormat.rows(listOf(entry(ok = false, summary = "")), now).single().sub)
     }
 
+    @Test fun aFailedTaskOffersResumeAndASuccessfulTaskOffersRerun() {
+        assertEquals("继续任务",HistoryFormat.detail(entry(ok=false),now,{},{}).runLabel)
+        assertEquals("重新运行",HistoryFormat.detail(entry(),now,{},{}).runLabel)
+    }
+
     @Test fun nothingTechnicalReachesTheScreens() {
         val shown = HistoryFormat.rows(listOf(entry()), now).single().toString() +
             HistoryFormat.recent(listOf(entry()), now).single().toString() +

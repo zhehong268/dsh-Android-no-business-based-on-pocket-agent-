@@ -46,6 +46,7 @@ import dev.pocketagent.device.Screen
 import dev.pocketagent.device.ScreenNode
 import dev.pocketagent.device.Shortcut
 import dev.pocketagent.device.Settler
+import dev.pocketagent.device.ScreenshotPacer
 import dev.pocketagent.device.SwipePath
 import dev.pocketagent.device.TypedText
 import dev.pocketagent.device.TextEntry
@@ -83,6 +84,7 @@ class AccessibilityDevice(
     private val appMatcher = AppMatcher(blockedApps)
     private val keyguard: KeyguardManager? = service.getSystemService(KeyguardManager::class.java)
     private val observationCounter = AtomicInteger(0)
+    private val screenshotPacer=ScreenshotPacer(android.os.SystemClock::uptimeMillis)
 
     /** The latest observation and its live nodes. Replaced by every read, cleared by [dropHandles]. */
     @Volatile
@@ -90,9 +92,10 @@ class AccessibilityDevice(
 
     override suspend fun readScreen(): Screen {
         ensureUsable()
+        val deadline=android.os.SystemClock.uptimeMillis()+300
         settler.settle()
         ensureUsable()
-        return withOverlaysHidden { readAndKeep() }
+        return withOverlaysHidden { readAndKeep(deadline) }
     }
 
     override suspend fun readUiSource():Screen {
@@ -114,6 +117,27 @@ class AccessibilityDevice(
     suspend fun readScreenNow(): Screen {
         ensureUsable()
         return readAndKeep()
+    }
+
+    override suspend fun readScreenFast():Screen {
+        ensureUsable()
+        return withOverlaysHidden { readAndKeep() }
+    }
+
+    suspend fun restoreApp(packageName:String):ActionResult = withContext(Dispatchers.Default) {
+        ensureUsable()
+        if(packageName==ownPackage || blockedApps.isBlocked(packageName,null))return@withContext ActionResult.Failed("原任务应用不能自动恢复。")
+        val intent=service.packageManager.getLaunchIntentForPackage(packageName)
+            ?: return@withContext ActionResult.Failed("请先打开原任务应用，再点继续任务。")
+        try {
+            service.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));settler.onEvent()
+            repeat(10) {
+                if(service.windows.orEmpty().any { it.isActive && it.type==android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION && it.root?.packageName?.toString()==packageName })return@withContext ActionResult.Ok
+                delay(30)
+            }
+            ActionResult.Failed("原应用尚未到前台，请打开后继续任务。")
+        }
+        catch(_:RuntimeException) { ActionResult.Failed("没能恢复原任务应用，请手动打开后继续。") }
     }
 
     /** Forgets the live node map, so no later action can use a handle from an old task. */
@@ -226,6 +250,7 @@ class AccessibilityDevice(
     }
 
     private suspend fun captureBitmap(): Bitmap? {
+        screenshotPacer.awaitSlot()
         return when (val first = capture()) {
             is Capture.Taken -> first.bitmap
             Capture.RateLimited -> {
@@ -239,8 +264,15 @@ class AccessibilityDevice(
 
     // --- Reading ---
 
-    private suspend fun readAndKeep(): Screen {
-        val reading = reader.read(observationCounter.getAndIncrement())
+    private suspend fun readAndKeep(deadline:Long=android.os.SystemClock.uptimeMillis()+180): Screen {
+        var reading = reader.read(observationCounter.getAndIncrement())
+        while(reading.handles.size<=1 && reading.screen.root.children.isEmpty() && reading.screen.root.label()==null && !reading.screen.root.editable) {
+            val remaining=deadline-android.os.SystemClock.uptimeMillis()
+            if(remaining<=0)break
+            delay(minOf(40,remaining))
+            ensureUsable()
+            reading=reader.read(observationCounter.getAndIncrement())
+        }
         // A read that finishes after the session closed must not keep live nodes behind dropHandles().
         if (isClosed()) throw DeviceUnavailable("dsh 的无障碍服务已关闭")
         observation = reading
@@ -766,7 +798,7 @@ class AccessibilityDevice(
         const val MIN_EDGE_DP = 24
         const val MAX_ANCESTORS = 60
         const val SCREENSHOT_LONG_SIDE_PX = 1_280
-        const val SCREENSHOT_RETRY_MS = 1_000L
+        const val SCREENSHOT_RETRY_MS = 350L
         val SCREEN_CHANGED = ActionResult.Failed("界面变了")
         val GESTURE_INTERRUPTED = ActionResult.Failed("手势被打断了", mayHaveEffect = true)
     }

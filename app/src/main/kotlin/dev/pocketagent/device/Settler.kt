@@ -8,8 +8,8 @@ import kotlinx.coroutines.delay
  */
 class Settler(
     private val now: () -> Long,
-    private val quietMs: Long = 300,
-    private val maxMs: Long = 3_000,
+    private val quietMs: Long = 60,
+    private val maxMs: Long = 300,
 ) {
     @Volatile
     private var lastEvent = now()

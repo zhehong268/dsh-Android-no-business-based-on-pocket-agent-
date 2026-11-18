@@ -5,6 +5,7 @@ import android.content.Context
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -12,10 +13,13 @@ import android.widget.TextView
 import dev.pocketagent.R
 import dev.pocketagent.ui.kit.Kit
 
-/** Task-only panel. Drag the header to move it; screen reads and gestures temporarily hide it. */
+/** Drag any non-button area. A stop tap has its own hit target, never the drag listener. */
 @SuppressLint("ClickableViewAccessibility")
 class TaskPanel(private val context: Context, onStop: () -> Unit) {
-    private val title = Kit.text(context, "dsh · 运行中", 13f, 600, R.color.pa_ink)
+    private val title = Kit.text(context, "dsh · 运行中 · 可拖动", 13f, 600, R.color.pa_ink).apply {
+        minimumHeight=Overlays.dp(context,32)
+        gravity=Gravity.CENTER_VERTICAL
+    }
     private val plan = Kit.text(context, "正在读取屏幕", 12f, 400, R.color.pa_ink)
     private val action = Kit.text(context, "准备操作", 12f, 500, R.color.pa_ink)
     private val view = LinearLayout(context).apply {
@@ -57,23 +61,30 @@ class TaskPanel(private val context: Context, onStop: () -> Unit) {
         var startY = 0
         var touchX = 0f
         var touchY = 0f
-        title.setOnTouchListener { _, event ->
+        var dragging=false
+        val slop=ViewConfiguration.get(context).scaledTouchSlop
+        val drag=View.OnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     startX = params.x; startY = params.y
                     touchX = event.rawX; touchY = event.rawY
+                    dragging=false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    if(!dragging && kotlin.math.abs(event.rawX-touchX)<slop && kotlin.math.abs(event.rawY-touchY)<slop)return@OnTouchListener true
+                    dragging=true
                     val display = context.resources.displayMetrics
                     params.x = (startX + (event.rawX - touchX).toInt()).coerceIn(0, (display.widthPixels - params.width).coerceAtLeast(0))
                     params.y = (startY + (event.rawY - touchY).toInt()).coerceIn(0, (display.heightPixels - view.height).coerceAtLeast(0))
                     Overlays.update(context, view, params)
                     true
                 }
-                else -> true
+                MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL -> { dragging=false;true }
+                else -> false
             }
         }
+        listOf(view,title,plan,action).forEach { it.setOnTouchListener(drag) }
     }
 
     fun setRunning(value: Boolean) {
@@ -105,7 +116,7 @@ class TaskPanel(private val context: Context, onStop: () -> Unit) {
 
     private fun refresh() {
         if (!running) { close(); return }
-        title.text = if (waiting) "dsh · 等待确认" else "dsh · 运行中"
+        title.text = if (waiting) "dsh · 等待确认 · 可拖动" else "dsh · 运行中 · 可拖动"
         action.text = lastText
         view.visibility = if (visible) View.VISIBLE else View.INVISIBLE
         if (!shown) shown = Overlays.add(context, view, params)

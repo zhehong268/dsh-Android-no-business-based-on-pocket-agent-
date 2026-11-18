@@ -71,6 +71,9 @@ interface DevicePort {
     /** Waits for the screen to settle, leaves out dsh's own windows, and assigns ids with [NodeIds]. */
     suspend fun readScreen(): Screen
 
+    /** A follow-up verification of an already dispatched action; no additional idle wait. */
+    suspend fun readScreenFast(): Screen = readScreen()
+
     /**
      * Re-checks the target's label and bounds against the observation first. On a mismatch it returns
      * `Failed("screen changed")` and does nothing.

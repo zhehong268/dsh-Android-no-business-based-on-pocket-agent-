@@ -73,6 +73,7 @@ class ChatExecutionTest {
         val ui=FakeUi();assertTrue(loop(llm,device,ui).run("打开张小明会话",initial).success)
         assertEquals("chat",device.page);assertEquals(5,device.actions.size);assertTrue(ui.confirmRequests.isEmpty())
         assertEquals(2,llm.turns.size)
+        assertEquals(7,device.reads) // One initial read, one at tool entry and one after each real action.
     }
     @Test fun contactNavigationRespectsTheActionBudget()=runTest {
         val device=ContactDevice();val initial=device.readScreen()

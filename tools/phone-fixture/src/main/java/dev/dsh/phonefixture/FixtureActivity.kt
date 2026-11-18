@@ -20,12 +20,19 @@ class FixtureActivity:Activity() {
     private var person="张小明"
     private var scene="contacts"
     private val history=mutableListOf<String>()
+    private val handler=android.os.Handler(android.os.Looper.getMainLooper())
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
         dark=intent.getStringExtra("theme")=="dark"
         scene=intent.getStringExtra("scene")?:"contacts"
-        when(scene){"chat","voice","ambiguous","hidden"->chat(scene=="voice",scene=="ambiguous");else->home()}
+        when(scene){"chat","voice","ambiguous","hidden","delayed","animated"->chat(scene=="voice",scene=="ambiguous");else->home()}
+        if(scene=="animated") {
+            var tick=0
+            val animate=object:Runnable { override fun run(){state.text="fixture_state tick=${++tick}";handler.postDelayed(this,20)} }
+            handler.post(animate)
+        }
     }
+    override fun onDestroy(){handler.removeCallbacksAndMessages(null);super.onDestroy()}
     private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
     private fun base(title:String) {
         root=LinearLayout(this).apply {
@@ -97,7 +104,13 @@ class FixtureActivity:Activity() {
         if(ambiguous)row.addView(PasteOnlyEditor().apply { id=R.id.message_extra },LinearLayout.LayoutParams(0,dp(76),1f))
         row.addView(button("发送") {
             val text=body.text?.toString().orEmpty()
-            if(text.isNotEmpty()){history+=text;sends++;body.setText("");messages.addView(label(text+" 已发送"));updateState()}
+            if(text.isNotEmpty()) {
+                history+=text;sends++;body.setText("");updateState()
+                if(scene=="delayed") {
+                    row.removeAllViews();row.addView(button("更多功能"){})
+                    handler.postDelayed({messages.addView(label("").apply { contentDescription="我：$text";minimumHeight=dp(60) })},180)
+                } else messages.addView(label(text+" 已发送"))
+            }
         })
     }
     private inner class PasteOnlyEditor:EditText(this@FixtureActivity) {

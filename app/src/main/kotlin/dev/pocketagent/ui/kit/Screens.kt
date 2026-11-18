@@ -20,6 +20,7 @@ data class ActivityRow(val id: Long, val ok: Boolean, val title: String, val sub
 class ActivityDetail(
     val ok: Boolean, val title: String, val whenText: String, val result: String,
     val onRun: () -> Unit = {}, val onDelete: () -> Unit = {},
+    val runLabel:String = if(ok)"重新运行" else "继续任务",
 )
 
 /** One thing that needs fixing, shown on Home as a single card with one button. */
@@ -511,7 +512,7 @@ object Screens {
         }
         p.addView(res, Kit.lp())
         p.addView(gap(c, 22))
-        p.addView(Kit.primary(c, "重新运行", onClick = detail.onRun), Kit.lp())
+        p.addView(Kit.primary(c, detail.runLabel, onClick = detail.onRun), Kit.lp())
         p.addView(Kit.text(c, "从记录中删除", 17f, 400, R.color.pa_bad).apply {
             gravity = Gravity.CENTER; setPadding(0, dp(c, 16), 0, dp(c, 8))
             Kit.pressable(this, 1f, onClick = detail.onDelete)

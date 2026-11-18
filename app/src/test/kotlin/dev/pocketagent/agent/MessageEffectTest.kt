@@ -61,4 +61,39 @@ class MessageEffectTest {
     @Test fun editableTextSayingSendIsNotASendButton() {
         assertFalse(MessageEffect.isSend(input.copy(text="发送")))
     }
+
+    @Test fun aRebuiltComposerWithNewIdAndBoundsStillVerifies() {
+        val rebuilt=after(node("bubble",text=body)).copy(root=after(node("bubble",text=body)).root.let { root->
+            root.copy(children=root.children.map { if(it.editable)it.copy(viewId="new_editor",bounds=Bounds(100,1800,700,1900)) else it }) })
+        assertTrue(effect().verified(rebuilt))
+    }
+    @Test fun aNewBubbleCanVerifyWhenTheEditorIsRemovedInTheSameConversation() {
+        val title=node("title",text="张小明",bounds=Bounds(20,60,600,140))
+        val initial=before(title)
+        val receipt=MessageEffect.begin(initial,send,body)!!
+        val sent=screenOf(title,node("bubble",text=body,bounds=Bounds(400,500,1000,650)),node("plus",role="button",description="更多功能"))
+        assertTrue(receipt.verified(sent))
+        assertFalse(receipt.verified(sent.copy(root=sent.root.copy(children=sent.root.children.map { if(it.id=="title")it.copy(text="李四") else it }))))
+    }
+    @Test fun anExplicitSelfSenderDescriptionIsAcceptedButExtraBodyIsNot() {
+        assertTrue(effect().verified(after(node("bubble",description="我：$body 已发送"))))
+        assertFalse(effect().verified(after(node("bubble",description="我：$body，另加一句 已发送"))))
+        assertFalse(effect().verified(after(node("bubble",description="李四：$body 已发送"))))
+    }
+    @Test fun separatePendingStatusPreventsAnExactBubbleFromVerifying() {
+        assertFalse(effect().verified(after(node("bubble",text=body),node("status",text="发送中"))))
+    }
+    @Test fun aMultilineBubbleMayExposeItsParagraphsAsSeparateChildren() {
+        val draft=input.copy(text="第一行\n第二行")
+        val receipt=MessageEffect.begin(screenOf(draft,send),send,draft.text)!!
+        val bubble=node("bubble",children=listOf(node("p1",text="第一行"),node("p2",text="第二行"))).copy(viewId="chat_message_content")
+        assertTrue(receipt.verified(after(bubble)))
+    }
+    @Test fun aPersistedReceiptRecoversEvidenceWithoutSavingTheBody() {
+        val original=effect()
+        val store=ProgressStore(MemoryValues())
+        store.save(TaskProgress("发送任务",pendingMessage=true,messageReceipt=original.receipt))
+        assertTrue(MessageEffect.restore(store.load()!!.messageReceipt!!).verified(after(node("bubble",text=body))))
+        assertFalse(original.receipt.toString().contains(body))
+    }
 }

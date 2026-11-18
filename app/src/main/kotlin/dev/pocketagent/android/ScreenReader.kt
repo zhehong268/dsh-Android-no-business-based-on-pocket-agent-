@@ -55,7 +55,8 @@ internal class ScreenReader(private val service: AccessibilityService) {
         val limit=if(detailed)3_000 else MAX_NODES
         val copier = Copier(depth,limit)
         val converter=TreeConverter(depth,limit)
-        val raw = window.root?.let { copier.copy(it, depth = 0) }
+        // A layout replacement can leave a cached root with no visible descendants until the next event.
+        val raw = window.root?.let { it.refresh();copier.copy(it, depth = 0) }
         val packageName = raw?.packageName ?: window.packageName
         val converted = raw?.let { converter.convert(it, observation) }
         val root = converted?.root

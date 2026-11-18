@@ -15,7 +15,7 @@ const out=process.env.DSH_LIVE_OUT||fileURLToPath(new URL('../build/live-phone',
 const native=process.env.DSH_NATIVE_FIXTURE==='1';
 mkdirSync(out,{recursive:true});
 function run(...args){const r=spawnSync(adb,['-s',serial,...args],{encoding:'utf8',timeout:30000});if(r.status!==0)throw Error('adb 操作失败：'+args.slice(0,2).join(' '));return r.stdout;}
-function prefs(xml){run('shell','run-as','dev.pocketagent','rm','-f','shared_prefs/pocketagent_setup.xml.bak');const r=spawnSync(adb,['-s',serial,'shell','run-as','dev.pocketagent','sh','-c',"'cat > shared_prefs/pocketagent_setup.xml'"],{input:xml,encoding:'utf8',timeout:10000});if(r.status!==0)throw Error('无法恢复测试配置');}
+function prefs(xml,file='pocketagent_setup'){assert.ok(['pocketagent_setup','dsh_progress'].includes(file));run('shell','run-as','dev.pocketagent','rm','-f',`shared_prefs/${file}.xml.bak`);const r=spawnSync(adb,['-s',serial,'shell','run-as','dev.pocketagent','sh','-c',`'cat > shared_prefs/${file}.xml'`],{input:xml,encoding:'utf8',timeout:10000});if(r.status!==0)throw Error('无法恢复测试配置');}
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const uiFile=`/sdcard/dsh-live-ui-${Date.now()}.xml`;
 function nodes(){run('shell','uiautomator','dump',uiFile);const xml=run('shell','cat',uiFile);return [...xml.matchAll(/<node\s+([^>]+)>/g)].map(m=>Object.fromEntries([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(x=>[x[1],x[2]])));}
@@ -23,7 +23,7 @@ function tapNode(n){assert.ok(n,'测试界面目标不存在');const b=n.bounds.
 function tapText(label,list=nodes()){const n=list.find(n=>n.text===label);if(!n)return false;tapNode(n);return true;}
 function input(n,text){tapNode(n);run('shell','input','keyevent','123');if(n.text?.length)run('shell','input','keyevent',...Array(n.text.length).fill('67'));run('shell','input','text',text);run('shell','input','keyevent','4');}
 function screenshot(name){const r=spawnSync(adb,['-s',serial,'exec-out','screencap','-p'],{timeout:10000});if(r.status===0)writeFileSync(`${out}/${name}.png`,r.stdout);}
-let original,enabled,proxy,server,token=randomBytes(24).toString('hex'),id=0,approvals=0;
+let original,progressBefore,enabled,proxy,server,token=randomBytes(24).toString('hex'),id=0,approvals=0;
 const checks=[],events=[],tasks=[],nativeStates=[];
 function nativeState() {
   const list=nodes();const state=list.find(n=>n['resource-id']==='dev.dsh.phonefixture:id/fixture_state')?.text||'';
@@ -46,6 +46,8 @@ try{
   const other=enabled.split(':').filter(x=>x&&x!=='null'&&!x.startsWith('dev.pocketagent/')).join(':');
   run('shell','settings','put','secure','enabled_accessibility_services',other||"''");await delay(450);
   run('shell','am','force-stop','dev.pocketagent');
+  try{progressBefore=run('shell','run-as','dev.pocketagent','cat','shared_prefs/dsh_progress.xml')}catch{progressBefore=null;}
+  run('shell','run-as','dev.pocketagent','rm','-f','shared_prefs/dsh_progress.xml','shared_prefs/dsh_progress.xml.bak');
   original=run('shell','run-as','dev.pocketagent','cat','shared_prefs/pocketagent_setup.xml').replace(/<map\s*\/>/,'<map></map>');
   run('shell','am','force-stop','dev.pocketagent');
   prefs(original.replace(/<boolean name="settings\.computerLink"[^>]*\/>/g,'').replace(/<string name="settings\.linkToken">[^<]*<\/string>/g,'').replace('</map>',`<boolean name="settings.computerLink" value="true"/><string name="settings.linkToken">${token}</string></map>`));
@@ -97,6 +99,8 @@ finally{
     const other=enabled?.split(':').filter(x=>x&&x!=='null'&&!x.startsWith('dev.pocketagent/')).join(':');
     run('shell','settings','put','secure','enabled_accessibility_services',other||"''");await delay(250);
     run('shell','am','force-stop','dev.pocketagent');prefs(original);
+    if(progressBefore!=null)prefs(progressBefore,'dsh_progress');
+    else if(progressBefore===null)run('shell','run-as','dev.pocketagent','rm','-f','shared_prefs/dsh_progress.xml','shared_prefs/dsh_progress.xml.bak');
   }catch{}}
   if(enabled!==undefined)try{run('shell','settings','put','secure','enabled_accessibility_services',enabled&&enabled!=='null'?enabled:"''");}catch{}
   if(proxy!==undefined)try{if(proxy&&proxy!=='null')run('shell','settings','put','global','http_proxy',proxy);else {run('shell','settings','put','global','http_proxy',':0');run('shell','settings','delete','global','http_proxy');}}catch{}

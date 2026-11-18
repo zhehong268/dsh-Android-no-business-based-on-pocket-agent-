@@ -12,10 +12,10 @@ const release=lockPhone(serial);
 const out=process.env.DSH_TEST_OUT || fileURLToPath(new URL('../build/device-smoke',import.meta.url));
 mkdirSync(out,{recursive:true});
 function run(...args){const r=spawnSync(adb,['-s',serial,...args],{encoding:'utf8',timeout:30000});if(r.status!==0)throw Error(`adb ${args.slice(0,3).join(' ')}: ${r.stderr}`);return r.stdout;}
-function prefsWrite(xml){run('shell','run-as','dev.pocketagent','rm','-f','shared_prefs/pocketagent_setup.xml.bak');const r=spawnSync(adb,['-s',serial,'shell','run-as','dev.pocketagent','sh','-c',"'cat > shared_prefs/pocketagent_setup.xml'"],{input:xml,encoding:'utf8',timeout:10000});if(r.status!==0)throw Error('cannot write test preferences');}
+function prefsWrite(xml,file='pocketagent_setup'){assert.ok(['pocketagent_setup','dsh_progress'].includes(file));run('shell','run-as','dev.pocketagent','rm','-f',`shared_prefs/${file}.xml.bak`);const r=spawnSync(adb,['-s',serial,'shell','run-as','dev.pocketagent','sh','-c',`'cat > shared_prefs/${file}.xml'`],{input:xml,encoding:'utf8',timeout:10000});if(r.status!==0)throw Error('cannot write test preferences');}
 function shot(name){const r=spawnSync(adb,['-s',serial,'exec-out','screencap','-p'],{timeout:10000});if(r.status!==0)throw Error('screenshot failed');writeFileSync(`${out}/${name}.png`,r.stdout);}
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
-let original,enabled,proxy,token=randomBytes(24).toString('hex'),counter=0,server,modelRequests=0,failModel=false;
+let original,progressBefore,enabled,proxy,token=randomBytes(24).toString('hex'),counter=0,server,modelRequests=0,failModel=false,modelResponder=null;
 const checks=[],events=[],timings=[];
 async function rpc(name,args={}){const started=performance.now();const r=await fetch('http://127.0.0.1:18765/mcp',{method:'POST',headers:{'content-type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({jsonrpc:'2.0',id:++counter,method:'tools/call',params:{name,arguments:args}}),signal:AbortSignal.timeout(140000)});assert.equal(r.status,200,`${name} HTTP ${r.status}`);const data=await r.json();if(data.error)throw Error(`${name}: ${JSON.stringify(data.error)}`);timings.push({name,ms:Math.round(performance.now()-started),interactive:name==='control_start'||name==='run_task'||(name==='tap_text'&&args.text==='发送')});return data.result;}
 function text(result){return result.content.filter(x=>x.type==='text').map(x=>x.text).join('\n');}
@@ -33,6 +33,8 @@ try{
   const without=enabled.split(':').filter(x=>x&&x!=='null'&&!x.startsWith('dev.pocketagent/')).join(':');
   run('shell','settings','put','secure','enabled_accessibility_services',without||"''");await delay(450);
   run('shell','am','force-stop','dev.pocketagent');
+  try{progressBefore=run('shell','run-as','dev.pocketagent','cat','shared_prefs/dsh_progress.xml')}catch{progressBefore=null;}
+  run('shell','run-as','dev.pocketagent','rm','-f','shared_prefs/dsh_progress.xml','shared_prefs/dsh_progress.xml.bak');
   try { original=run('shell','run-as','dev.pocketagent','cat','shared_prefs/pocketagent_setup.xml'); }
   catch { original='<?xml version="1.0" encoding="utf-8"?><map></map>'; run('shell','run-as','dev.pocketagent','mkdir','-p','shared_prefs'); }
   original=original.replace(/<map\s*\/>/,'<map></map>');
@@ -42,7 +44,7 @@ try{
   const xml=original.replace(/<boolean name="settings\.computerLink"[^>]*\/>/g,'').replace(/<string name="settings\.linkToken">[^<]*<\/string>/g,'').replace('</map>',`<boolean name="settings.computerLink" value="true" /><string name="settings.linkToken">${token}</string></map>`);
   // A credential-free local model fixture; the original configuration stays only in memory.
   const configured=xml.replace(/<(string|boolean|int) name="config\.[^"]+"[^>]*>(?:[^<]*)<\/\1>/g,'').replace(/<(?:string|boolean|int) name="config\.[^"]+"[^>]*\/>/g,'').replace('</map>',
-    '<string name="config.kind">OPENAI_COMPAT</string><string name="config.baseUrl">http://127.0.0.1:18100/v1</string><string name="config.model">local-fixture</string><string name="config.images">true</string><string name="config.contextTokens">128000</string><string name="config.maxOutputTokens">4096</string></map>');
+    '<boolean name="settings.notice" value="true"/><string name="config.kind">OPENAI_COMPAT</string><string name="config.baseUrl">http://127.0.0.1:18100/v1</string><string name="config.model">local-fixture</string><string name="config.images">true</string><string name="config.contextTokens">128000</string><string name="config.maxOutputTokens">4096</string></map>');
   prefsWrite(configured);
   run('shell','settings','put','secure','enabled_accessibility_services',without||"''");
   run('shell','settings','put','secure','enabled_accessibility_services',[without,'dev.pocketagent/dev.pocketagent.android.PocketAccessibilityService'].filter(Boolean).join(':'));
@@ -69,13 +71,14 @@ try{
   const chat=`<!doctype html><meta charset="utf-8"><meta name="google" content="notranslate"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:22px sans-serif;padding:20px}button,input{font:22px sans-serif;padding:12px;margin:10px;display:block}</style><div id="list"><h1>微信流程本地测试</h1><button onclick="document.querySelector('#list').hidden=true;document.querySelector('#chat').hidden=false;fetch('/event?name=chat-open')">测试联系人</button><button>测试联系人二</button></div><div id="chat" hidden><h1>测试联系人</h1><div id="messages"></div><p id="status"></p><input id="message" aria-label="消息输入框" placeholder="消息输入框" oninput="fetch('/event?name='+encodeURIComponent('message:'+this.value))"><button onclick="let i=document.querySelector('#message');if(!i.value)return;fetch('/event?name='+encodeURIComponent('sent:'+i.value));document.querySelector('#messages').textContent=i.value+' 已发送';i.value='';">发送</button></div>`;
   const pendingChat=chat.replace("fetch('/event?name='+encodeURIComponent('sent:'+i.value));document.querySelector('#messages').textContent=i.value+' 已发送';i.value='';", "fetch('/event?name=send-pending');document.querySelector('#status').textContent='请求处理中';");
   server=createServer((req,res)=>{if(req.url.includes('/chat/completions')) {
-    req.resume();req.on('end',()=>setTimeout(()=>{
-      if(failModel){res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'Local fixture error',type:'invalid_request_error'}}));return;}
+    let body='';req.on('data',chunk=>{body+=chunk});req.on('end',()=>setTimeout(()=>{
+      const scripted=modelResponder?.(JSON.parse(body));
+      if(failModel||scripted?.failure){res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'Local fixture error',type:'invalid_request_error'}}));return;}
       const first=++modelRequests===1;
-      const name=first?'checkpoint':'done';
-      const args=first?{goal:'核对本地任务面板',completed:'观察页面',next:'保存测试结果',expected:'任务结束后面板消失'}:{summary:'本地生命周期检查完成',success:true};
+      const name=scripted?.name||(first?'checkpoint':'done');
+      const args=scripted?.args||(first?{goal:'核对本地任务面板',completed:'观察页面',next:'保存测试结果',expected:'任务结束后面板消失'}:{summary:'本地生命周期检查完成',success:true});
       res.setHeader('content-type','application/json');res.end(JSON.stringify({choices:[{message:{role:'assistant',content:null,tool_calls:[{id:'fixture-'+modelRequests,type:'function',function:{name,arguments:JSON.stringify(args)}}]},finish_reason:'tool_calls'}],usage:{prompt_tokens:1,completion_tokens:1}}));
-    },1400));return;
+    },modelResponder?100:1400));return;
   }if(req.url.startsWith('/event')){events.push(new URL(req.url,'http://local').searchParams.get('name'));res.end('ok');return;}res.setHeader('content-type','text/html;charset=utf-8');res.end(req.url.startsWith('/canvas')?canvas:req.url.startsWith('/chat-pending')?pendingChat:req.url.startsWith('/chat')?chat:html);});
   await new Promise(r=>server.listen(18100,'0.0.0.0',r));
   if(process.env.DSH_NATIVE_ONLY!=='1') {
@@ -148,6 +151,7 @@ try{
   await delay(1000);shot('10-send-confirmation');
   if(process.env.DSH_SMOKE_APPROVE==='1')run('shell','input','tap','780','2180');
   const sendSettled=await sendPending;if(sendSettled.error)throw sendSettled.error;
+  saveResult('10-send-result',sendSettled.result);
   check('单次确认后只发出一条本地消息',!sendSettled.result.isError&&events.filter(x=>x==='sent:'+message).length===1);
   check('发送结果有新增气泡与清空输入框的依据',text(sendSettled.result).includes('已核验：新增正文气泡'));
   const sent=saveResult('11-message-result',await rpc('read_screen'));
@@ -210,7 +214,11 @@ try{
   }
   if(process.env.DSH_NATIVE_FIXTURE==='1') {
     const {nativeChatCases}=await import('./native-chat-cases.mjs');
-    await nativeChatCases({run,rpc,check,saveResult,shot});
+    if(process.env.DSH_RESUME_ONLY!=='1')await nativeChatCases({run,rpc,check,saveResult,shot});
+    if(process.env.DSH_RESUME_SPEED==='1') {
+      const {resumeSpeedCases}=await import('./resume-speed-cases.mjs');
+      await resumeSpeedCases({run,rpc,check,saveResult,shot,out,setResponder:fn=>{modelResponder=fn;failModel=false;modelRequests=0;}});
+    }
   }
 }catch(e){checks.push({name:'device run',passed:false,error:e.message});console.error(e.stack);process.exitCode=1;}
 finally{
@@ -220,6 +228,8 @@ finally{
     const without=enabled?.split(':').filter(x=>x&&x!=='null'&&!x.startsWith('dev.pocketagent/')).join(':');
     run('shell','settings','put','secure','enabled_accessibility_services',without||"''");await delay(250);
     run('shell','am','force-stop','dev.pocketagent');prefsWrite(original.replace(/<boolean name="settings\.computerLink"[^>]*\/>/g,'').replace(/<string name="settings\.linkToken">[^<]*<\/string>/g,''));
+    if(progressBefore!=null)prefsWrite(progressBefore,'dsh_progress');
+    else if(progressBefore===null)run('shell','run-as','dev.pocketagent','rm','-f','shared_prefs/dsh_progress.xml','shared_prefs/dsh_progress.xml.bak');
   }
   if(enabled!==undefined)run('shell','settings','put','secure','enabled_accessibility_services',enabled&&enabled!=='null'?enabled:"''");
   if(proxy!==undefined){if(proxy&&proxy!=='null')run('shell','settings','put','global','http_proxy',proxy);else {run('shell','settings','put','global','http_proxy',':0');run('shell','settings','delete','global','http_proxy');}}

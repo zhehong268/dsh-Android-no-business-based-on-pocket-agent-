@@ -18,9 +18,9 @@ class SequenceExecutionTest {
     private fun loop(llm:FakeLlm,device:DevicePort,ui:AgentUi=FakeUi(),maxSteps:Int=10)=AgentLoop(llm,device,SafetyGate(BlockedApps(),"dev.pocketagent"),PlaybookStore.load(emptyMap(),BlockedApps()),ScreenSerializer("dev.pocketagent"),ui,maxSteps=maxSteps,autoVision=false)
     @Test fun aPlanFindsFreshTargetsBetweenActionsWithoutAnotherModelCall()=runTest {
         val llm=FakeLlm(listOf(call("""[{"action":"tap","target":{"text":"张三"},"expect_text":"消息输入框"},{"action":"type","target":{"editable":true},"text":"明天见"}]"""),done(true)))
-        val device=FakeDevice(listOf(list,chat("b"),chat("c"),chat("d","明天见")))
+        val device=FakeDevice(listOf(list,chat("b"),chat("d","明天见")))
         assertTrue(loop(llm,device).run("打开张三并填写草稿",list).success)
-        assertEquals(2,device.actions.size);assertEquals("c2",(device.actions[1] as DeviceAction.TypeText).node.id)
+        assertEquals(2,device.actions.size);assertEquals("b2",(device.actions[1] as DeviceAction.TypeText).node.id)
         assertEquals(2,llm.turns.size);assertTrue(llm.turns[1].toolResult!!.text.contains("2/2"))
     }
     @Test fun sendIsNotExecutedOrApprovedInsideASequence()=runTest {

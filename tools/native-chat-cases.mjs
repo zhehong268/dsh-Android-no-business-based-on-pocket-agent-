@@ -51,7 +51,7 @@ export async function nativeChatCases({run,rpc,check,saveResult,shot}) {
     await open('duplicates');await rpc('read_screen');
     const duplicate=await rpc('open_contact',{name:'同名联系人'});
     check('通讯录同名返回备注且不随意选人',duplicate.isError&&text(duplicate).includes('研发')&&text(duplicate).includes('销售')&&text(duplicate).includes('opened=0'));
-    const exact=await rpc('open_contact',{name:'同名联系人',hint:'研发'});
+    const exact=saveResult('native-duplicate-resolved',await rpc('open_contact',{name:'同名联系人',hint:'研发'}));
     check('用户给出备注后可定位唯一联系人',!exact.isError&&text(exact).includes('opened=1'));
     await rpc('control_stop');await delay(250);await open('hidden');
     const hiddenStart=rpc('control_start',{task:'核对仅通过扩展控件结构可见的本地正文框，只填写草稿，不发送。'});
