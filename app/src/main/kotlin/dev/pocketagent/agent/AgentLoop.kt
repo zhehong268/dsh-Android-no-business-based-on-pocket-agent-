@@ -3,6 +3,7 @@ package dev.pocketagent.agent
 import dev.pocketagent.device.ActionResult
 import dev.pocketagent.device.DeviceAction
 import dev.pocketagent.device.TextTargets
+import dev.pocketagent.device.TypedText
 import dev.pocketagent.device.ChatTargets
 import dev.pocketagent.device.Shot
 import dev.pocketagent.device.cleanUntrusted
@@ -139,6 +140,7 @@ const val EXECUTION_RULES: String = """
 - 连续失败或反复来回切页时会附有限次数的路线复核。核对建议后换入口或定位方式；复核不能替代执行结果，也不能绕过确认。
 - 有把握的 2 到 4 步可用 perform_steps 连续执行，例如打开会话后填写草稿。每步使用语义条件重新找目标，导航步骤可带 expect_text；不确定目标时只做一步。输入工具会自行聚焦，不用先点一次已找到的输入框。发送、删除、付款和状态未知的勾选控件必须单独处理，不能夹在连续计划里。
 - 安全步骤优先合并，不必预知下一页 node_id，只需给出可核对的语义条件。若本段已经完成整个用户任务，用 perform_steps 的 finish_if_verified=true、summary 和最后一步 expect_text 本地核验后直接收尾；最后的填写或文字消息发送也可用 finish_if_verified，避免仅为报告完成再请求一轮。核验不成立时不会结束，不要谎称完成。
+- 已在目标聊天应用且完整收件人与正文都明确时，用 fill_chat(open_if_needed=true) 一次导航并填写。只要求草稿时可直接核验收尾，要求发送时再单独调用发送。需要看布局或无标签控件时用图，单纯核对可读文字或状态时用 read_screen(include_image=false)。
 """
 
 const val NOTIFICATION_RULES: String = """
@@ -467,7 +469,7 @@ class AgentLoop(
                 run.latestShot=shot;run.shotObservation=run.screen.observation
                 Step.Next(Turn(next.text,ToolResult(call.callId,"已放大区域 (${tool.left},${tool.top},${tool.right},${tool.bottom})；图上坐标仍为原屏幕像素。observation=${run.screen.observation}\n"+MarkLegend.text(shot.marks),false),image=shot.png,systemNote=next.note))
             }
-            ToolCall.ReadScreen -> refresh(run, call)
+            is ToolCall.ReadScreen -> refresh(run, call, tool.includeImage)
             is ToolCall.ReadElement -> readElement(run, call, tool)
             is ToolCall.FindElements -> {
                 val hits = TextTargets.find(run.screen, tool.text, tool.container, tool.role, tool.editable, tool.viewId)
@@ -535,31 +537,53 @@ class AgentLoop(
     }
     private fun actionLimit(run:Run)=if(run.answeringQuiz)maxOf(maxSteps,QUIZ_STEPS) else maxSteps
 
-    private suspend fun openContact(run:Run,call:LlmResult.Call,tool:ToolCall.OpenContact):Step {
+    private suspend fun openContact(
+        run: Run,
+        call: LlmResult.Call,
+        tool: ToolCall.OpenContact,
+        captureOnSuccess: Boolean = true,
+        refreshFirst: Boolean = true,
+    ): Step {
         val tried=mutableSetOf<String>()
         var selected=false
+        var waitedForSearch = false
         suspend fun stopped(message:String)=Step.Next(enrich(run,Turn(serializer.serialize(run.screen),ToolResult(call.callId,message,true)),force=true))
+        if (refreshFirst) observe(run) ?: return Step.End(end(EndReason.BLOCKED_APP,"当前应用被拦截。"))
+        val packageName = run.screen.packageName
         repeat(8) {
-            if(tried.isEmpty())observe(run) ?: return Step.End(end(EndReason.BLOCKED_APP,"当前应用被拦截。"))
-            val screen=run.screen
-            if(ChatTargets.isConversation(screen) && ChatTargets.title(screen,tool.name)!=null) {
+            if (run.screen.packageName != packageName) return stopped("搜索时切换了应用，请先回到目标聊天应用。")
+            var screen=run.screen
+            if (ChatTargets.isConversation(screen) && ChatTargets.title(screen, tool.name) != null && (tool.hint.isBlank() || selected)) {
                 run.chatRecipient=tool.name
-                return Step.Next(enrich(run,Turn(serializer.serialize(screen),ToolResult(call.callId,"已核验会话标题与指定联系人一致。\n"+ChatTargets.summary(screen),false)),force=true))
+                return Step.Next(enrich(run,Turn(serializer.serialize(screen),ToolResult(call.callId,"已核验会话标题与指定联系人一致。\n"+ChatTargets.summary(screen),false)),force=captureOnSuccess))
             }
             val action:ToolCall
             if(ChatTargets.isConversation(screen)) {
                 action=ToolCall.Back
             } else {
-                val hits=ChatTargets.contacts(screen,tool.name,tool.hint)
+                var hits=ChatTargets.contacts(screen,tool.name,tool.hint)
+                var field=ChatTargets.searchField(screen)
+                if (hits.isEmpty() && !waitedForSearch && field != null && TypedText.matches(tool.name, field.text)) {
+                    waitedForSearch = true
+                    for (pause in listOf(50L, 100L, 150L, 200L)) {
+                        delay(pause)
+                        observe(run, quick = true) ?: return Step.End(end(EndReason.BLOCKED_APP,"当前应用被拦截。"))
+                        screen = run.screen
+                        if (screen.packageName != packageName) return stopped("搜索时切换了应用，请先回到目标聊天应用。")
+                        field = ChatTargets.searchField(screen)
+                        if (field == null || !TypedText.matches(tool.name, field.text)) return stopped("搜索条件已变化，请核对当前页面。")
+                        hits = ChatTargets.contacts(screen, tool.name, tool.hint)
+                        if (hits.isNotEmpty()) break
+                    }
+                }
                 if(hits.size>1)return stopped("联系人重名，未选择；需要核对备注或由用户补充标识。\n<screen_data>"+
                     hits.joinToString("\n"){ "[${it.target.id}] "+cleanUntrusted(it.context,300) }+"</screen_data>")
-                val field=ChatTargets.searchField(screen)
                 val message=TextTargets.find(screen,"发消息").filter { TextTargets.normalized(it.label().orEmpty())=="发消息" }.singleOrNull()
                 val identityVisible=screen.all().any { !it.editable && TextTargets.normalized(it.text.orEmpty())==TextTargets.normalized(tool.name) }
                 action=when {
                     selected && identityVisible && message!=null -> ToolCall.Tap(message.id,null,null,false)
                     hits.size==1 -> { selected=true;ToolCall.Tap(hits.single().target.id,null,null,false) }
-                    field!=null && !dev.pocketagent.device.TypedText.matches(tool.name,field.text) -> ToolCall.TypeText(field.id,tool.name)
+                    field!=null && !TypedText.matches(tool.name,field.text) -> ToolCall.TypeText(field.id,tool.name)
                     field!=null -> return stopped("搜索已填写，但未找到完整姓名匹配的联系人；先等结果或核对姓名、备注。")
                     else -> {
                         val contacts=ChatTargets.navigation(screen,"通讯录")
@@ -585,6 +609,12 @@ class AgentLoop(
 
     private suspend fun fillChat(run:Run,call:LlmResult.Call,tool:ToolCall.FillChat):Step {
         observe(run) ?: return Step.End(end(EndReason.BLOCKED_APP,"当前应用被拦截。"))
+        if (tool.openIfNeeded && (ChatTargets.title(run.screen, tool.recipient) == null || tool.hint.isNotBlank())) {
+            when (val opened = openContact(run, call, ToolCall.OpenContact(tool.recipient, tool.hint), captureOnSuccess = false, refreshFirst = false)) {
+                is Step.End -> return opened
+                is Step.Next -> if (opened.turn.toolResult?.isError == true) return opened
+            }
+        }
         suspend fun stopped(message:String)=Step.Next(enrich(run,Turn(serializer.serialize(run.screen),ToolResult(call.callId,message,true)),force=true))
         if(ChatTargets.title(run.screen,tool.recipient)==null || ChatTargets.composer(run.screen)==null) {
             run.screen=device.readUiSource();run.needsFreshScreen=false
@@ -598,7 +628,7 @@ class AgentLoop(
                 val tap=ToolCall.Tap(keyboard.id,null,null,false)
                 val resolved=resolve(run.screen,tap).getOrElse { return stopped("文字输入切换控件已变化。") }
                 if(gate.check(resolved.action,run.screen,false)!=Verdict.Allow)return stopped("切换输入方式需要单独核对。")
-                when(val step=act(run,call,tap)) { is Step.End->return step;is Step.Next->if(step.turn.toolResult?.isError==true)return step }
+                when(val step=act(run,call,tap,capture=false)) { is Step.End->return step;is Step.Next->if(step.turn.toolResult?.isError==true)return step }
             }
         }
         if(ChatTargets.title(run.screen,tool.recipient)==null)return stopped("页面切换后收件人标题不符，未填正文。")
@@ -771,8 +801,11 @@ class AgentLoop(
             next=observe(run,quick=true) ?: return Step.End(end(EndReason.BLOCKED_APP,"任务切换到了被拦截的应用。"))
         }
         val messageVerified = checkingMessage && run.pendingMessage == null
+        val interruptedSendVerified = messageVerified && result is ActionResult.Failed && result.mayHaveEffect &&
+            (MessageEffect.isSend(target) || typed?.submit == true)
+        val actionVerified = result is ActionResult.Ok || interruptedSendVerified
         val typedVerified = result is ActionResult.Ok && ExecutionEvidence.typed(before,run.screen,target,typed)
-        val locallyFinished=finishVerified && result is ActionResult.Ok && (messageVerified || typedVerified)
+        val locallyFinished = finishVerified && actionVerified && (messageVerified || typedVerified) && !run.uncertainAction
         val preview = enrich(run, Turn(next.shown,systemNote=next.note), force = capture && !locallyFinished)
         val visualChanged = run.latestShot?.contentHash?.let { hash -> run.visualHash != null && run.visualHash != hash } == true
         run.latestShot?.contentHash?.let { run.visualHash=it }
@@ -790,12 +823,13 @@ class AgentLoop(
         val unchanged = countsAsScreenAction && !scrolled && !visualChanged && run.stuck.lastWasRepeat && !typedVerified
         if (unchanged && label != null) run.log.add(label, "屏幕没变")
         val noEffect = unchanged && label != null && run.log.repeated(label, "屏幕没变")
-        val toolResult = when (result) {
+        val toolResult = if (messageVerified && actionVerified) {
+            ToolResult(call.callId, "已核验：新增正文气泡，输入框已清空，未发现新增发送失败标记。", false)
+        } else when (result) {
             ActionResult.Ok -> when {
                 scrolled && run.stuck.lastWasRepeat -> ToolResult(call.callId, SCROLL_END, isError = false)
                 noEffect -> ToolResult(call.callId, NO_EFFECT, isError = true)
                 unchanged -> ToolResult(call.callId, "操作已发出，但尚未观察到状态变化；先核对结果，勿重复发送或提交。", isError = false)
-                messageVerified -> ToolResult(call.callId, "已核验：新增正文气泡，输入框已清空，未发现新增发送失败标记。", false)
                 typedVerified -> ToolResult(call.callId,"已核验：输入框内容符合要求。",false)
                 run.pendingMessage != null -> ToolResult(call.callId, "发送动作已发出，但尚未同时看到新增正文气泡和输入框清空；不要重发。", false)
                 else -> ToolResult(call.callId, ExecutionEvidence.inspect(before,run.screen,target) ?: "已观察到页面或控件状态变化，请核对是否达到目标。", isError = false)
@@ -803,18 +837,18 @@ class AgentLoop(
             is ActionResult.Failed -> ToolResult(call.callId, result.reason, isError = true)
         }
         val said = when {
-            result is ActionResult.Failed -> "失败"
+            !actionVerified -> "失败"
             unchanged -> "屏幕没变"
             scrolled -> "往下滚了一屏"
             else -> "成功"
         }
         if (label != null && !unchanged) run.log.add(label, said)
-        run.lastActionFailed = result is ActionResult.Failed || (unchanged && !messageVerified)
+        run.lastActionFailed = !actionVerified || (unchanged && !messageVerified)
         if (run.lastActionFailed) run.failedActionKey = ExecutionEvidence.fingerprint(before) + "|" + run.lastActionKey else run.failedActionKey = null
         if (run.pendingMessage != null || run.recoveredMessage) run.uncertainAction = true
-        else if ((!unchanged || messageVerified) && result is ActionResult.Ok) run.uncertainAction = false
+        else if ((!unchanged || messageVerified) && actionVerified) run.uncertainAction = false
         saveProgress(run)
-        if(finishVerified && result is ActionResult.Ok && (messageVerified || typedVerified) && !run.uncertainAction) {
+        if(finishVerified && actionVerified && (messageVerified || typedVerified) && !run.uncertainAction) {
             run.completionEvidence=if(messageVerified)"新增正文气泡且输入框清空" else "输入框内容已核验"
             return Step.End(TaskOutcome(EndReason.DONE,true,if(messageVerified)"消息已发送，已核验正文气泡与输入框清空。" else "已填写并核验输入框内容。"))
         }
@@ -1210,9 +1244,9 @@ class AgentLoop(
         return turn.copy(image=shot.png,systemNote=listOfNotNull(turn.systemNote,shot.context,"截图 observation=${run.screen.observation}；编号只对这次观察有效。\n"+MarkLegend.text(shot.marks)).joinToString("\n"))
     }
 
-    private suspend fun refresh(run: Run, call: LlmResult.Call): Step {
+    private suspend fun refresh(run: Run, call: LlmResult.Call, includeImage: Boolean): Step {
         val next=observe(run) ?: return Step.End(end(EndReason.BLOCKED_APP,"当前应用被拦截。"))
-        return Step.Next(enrich(run,Turn(next.text,ToolResult(call.callId,"已读取最新屏幕。",false),systemNote=noteWithTrail(next.note,run)),force=true))
+        return Step.Next(enrich(run,Turn(next.text,ToolResult(call.callId,"已读取最新屏幕。",false),systemNote=noteWithTrail(next.note,run)),force=includeImage))
     }
 
     private fun readElement(run: Run, call: LlmResult.Call, tool: ToolCall.ReadElement): Step {

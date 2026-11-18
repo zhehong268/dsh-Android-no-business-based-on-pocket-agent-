@@ -56,7 +56,12 @@ internal class ScreenReader(private val service: AccessibilityService) {
         val copier = Copier(depth,limit)
         val converter=TreeConverter(depth,limit)
         // A layout replacement can leave a cached root with no visible descendants until the next event.
-        val raw = window.root?.let { it.refresh();copier.copy(it, depth = 0) }
+        val raw = window.root?.let { root ->
+            // The framework can still serve cached children between coalesced accessibility events.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) service.clearCachedSubtree(root)
+            root.refresh()
+            copier.copy(root, depth = 0)
+        }
         val packageName = raw?.packageName ?: window.packageName
         val converted = raw?.let { converter.convert(it, observation) }
         val root = converted?.root

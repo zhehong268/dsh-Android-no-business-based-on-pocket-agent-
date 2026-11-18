@@ -17,7 +17,7 @@ object Captions {
 
     fun forAction(call: ToolCall, target: ScreenNode?): String = when (call) {
         is ToolCall.ZoomScreen -> "正在放大屏幕区域"
-        ToolCall.ReadScreen -> "正在重新读屏"
+        is ToolCall.ReadScreen -> "正在重新读屏"
         is ToolCall.ReadElement -> "正在读取完整内容"
         is ToolCall.FindElements -> "正在查找候选"
         is ToolCall.PerformSteps -> "正在连续操作"

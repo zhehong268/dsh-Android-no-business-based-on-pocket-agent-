@@ -4,12 +4,12 @@ import kotlinx.coroutines.delay
 
 /**
  * Waits for the screen to stop changing. [onEvent] may be called from any thread;
- * [settle] suspends until [quietMs] pass without events, or [maxMs] after the call.
+ * [settle] waits for [quietMs] without events. The caller can share its deadline with a read retry.
  */
 class Settler(
     private val now: () -> Long,
-    private val quietMs: Long = 60,
-    private val maxMs: Long = 300,
+    private val quietMs: Long = 40,
+    private val maxMs: Long = 100,
 ) {
     @Volatile
     private var lastEvent = now()
@@ -18,14 +18,15 @@ class Settler(
         lastEvent = now()
     }
 
-    suspend fun settle() {
-        val start = now()
+    fun deadline(): Long = now() + maxMs
+
+    suspend fun settle(deadline: Long = deadline()) {
         while (true) {
             val t = now()
             val quiet = t - lastEvent
-            val elapsed = t - start
-            if (quiet >= quietMs || elapsed >= maxMs) return
-            delay(minOf(quietMs - quiet, maxMs - elapsed))
+            val remaining = deadline - t
+            if (quiet >= quietMs || remaining <= 0) return
+            delay(minOf(quietMs - quiet, remaining))
         }
     }
 }

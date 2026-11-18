@@ -11,25 +11,25 @@ import kotlin.test.assertTrue
 
 class SettlerTest {
     @Test
-    fun aQuietPageReturnsAfter60ms() = runTest {
+    fun aQuietPageReturnsAfter40ms() = runTest {
         val settler = Settler(now = { testScheduler.currentTime })
         settler.settle()
-        assertEquals(60, testScheduler.currentTime)
+        assertEquals(40, testScheduler.currentTime)
     }
 
     @Test
-    fun anEventAt40msMovesItTo100ms() = runTest {
+    fun anEventAt30msMovesItTo70ms() = runTest {
         val settler = Settler(now = { testScheduler.currentTime })
         launch {
-            delay(40)
+            delay(30)
             settler.onEvent()
         }
         settler.settle()
-        assertEquals(100, testScheduler.currentTime)
+        assertEquals(70, testScheduler.currentTime)
     }
 
     @Test
-    fun aConstantStreamCannotPushTheWaitPast300ms() = runTest {
+    fun aConstantStreamCannotPushTheWaitPast100ms() = runTest {
         val settler = Settler(now = { testScheduler.currentTime })
         val feeder = launch {
             while (true) {
@@ -38,8 +38,18 @@ class SettlerTest {
             }
         }
         settler.settle()
-        assertEquals(300, testScheduler.currentTime)
+        assertEquals(100, testScheduler.currentTime)
         feeder.cancel()
+    }
+
+    @Test
+    fun timeSpentBeforeSettlingCountsAgainstTheSameBudget() = runTest {
+        val settler = Settler(now = { testScheduler.currentTime })
+        val deadline = settler.deadline()
+        delay(80)
+        settler.onEvent()
+        settler.settle(deadline)
+        assertEquals(100, testScheduler.currentTime)
     }
 
     @Test

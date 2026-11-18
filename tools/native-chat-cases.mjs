@@ -45,12 +45,17 @@ export async function nativeChatCases({run,rpc,check,saveResult,shot}) {
     check('先识别语音模式再切文字并粘贴',!voice.isError&&text(voice).includes('toggle=1')&&text(voice).includes('paste=1'));
     const cleared=await rpc('fill_chat',{recipient:'张小明',text:'',mode:'clear'});
     check('通过整段选择与粘贴清空原生草稿',!cleared.isError&&text(cleared).includes('value_empty=true'));
+    await open('slow_search');
+    const combined=saveResult('native-delayed-search-draft',await rpc('fill_chat',{recipient:'张小明',text:'合并查人与草稿',open_if_needed:true}));
+    check('一次调用等待延迟搜索结果并核对联系人后填草稿',!combined.isError&&text(combined).includes('合并查人与草稿')&&text(combined).includes('opened=1')&&text(combined).includes('paste=1')&&text(combined).includes('sent=0'));
     await open('ambiguous');await rpc('read_screen');
     const ambiguous=await rpc('fill_chat',{recipient:'张小明',text:'不应写入'});
     check('两个同样可信的正文框不会擅选',ambiguous.isError&&text(ambiguous).includes('paste=0'));
     await open('duplicates');await rpc('read_screen');
     const duplicate=await rpc('open_contact',{name:'同名联系人'});
     check('通讯录同名返回备注且不随意选人',duplicate.isError&&text(duplicate).includes('研发')&&text(duplicate).includes('销售')&&text(duplicate).includes('opened=0'));
+    const ambiguousDraft=await rpc('fill_chat',{recipient:'同名联系人',text:'不应写入',open_if_needed:true});
+    check('合并导航遇到同名停在候选页',ambiguousDraft.isError&&text(ambiguousDraft).includes('opened=0')&&text(ambiguousDraft).includes('paste=0'));
     const exact=saveResult('native-duplicate-resolved',await rpc('open_contact',{name:'同名联系人',hint:'研发'}));
     check('用户给出备注后可定位唯一联系人',!exact.isError&&text(exact).includes('opened=1'));
     await rpc('control_stop');await delay(250);await open('hidden');

@@ -66,7 +66,17 @@ class FixtureActivity:Activity() {
             val field=EditText(this).apply { id=R.id.contact_search;hint="搜索联系人";setSingleLine();showSoftInputOnFocus=false }
             field.addTextChangedListener(object:TextWatcher {
                 override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
-                override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) { populate(results,s?.toString().orEmpty()) }
+                override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) {
+                    val query = s?.toString().orEmpty()
+                    if (scene != "slow_search") {
+                        populate(results, query)
+                        return
+                    }
+                    results.removeAllViews()
+                    handler.postDelayed({
+                        if (field.isAttachedToWindow && field.text.toString() == query) populate(results, query)
+                    }, 320)
+                }
                 override fun afterTextChanged(s:Editable?){}
             })
             root.addView(field)

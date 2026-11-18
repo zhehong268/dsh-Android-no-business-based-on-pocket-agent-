@@ -92,8 +92,8 @@ class AccessibilityDevice(
 
     override suspend fun readScreen(): Screen {
         ensureUsable()
-        val deadline=android.os.SystemClock.uptimeMillis()+300
-        settler.settle()
+        val deadline = settler.deadline()
+        settler.settle(deadline)
         ensureUsable()
         return withOverlaysHidden { readAndKeep(deadline) }
     }
@@ -264,12 +264,12 @@ class AccessibilityDevice(
 
     // --- Reading ---
 
-    private suspend fun readAndKeep(deadline:Long=android.os.SystemClock.uptimeMillis()+180): Screen {
+    private suspend fun readAndKeep(deadline: Long = settler.deadline()): Screen {
         var reading = reader.read(observationCounter.getAndIncrement())
         while(reading.handles.size<=1 && reading.screen.root.children.isEmpty() && reading.screen.root.label()==null && !reading.screen.root.editable) {
             val remaining=deadline-android.os.SystemClock.uptimeMillis()
             if(remaining<=0)break
-            delay(minOf(40,remaining))
+            delay(minOf(20,remaining))
             ensureUsable()
             reading=reader.read(observationCounter.getAndIncrement())
         }

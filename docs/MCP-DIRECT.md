@@ -38,7 +38,9 @@ Content-Type: application/json
 
 `find_elements` 可组合 `text`、`role`、`editable`、`view_id` 和容器 `node_id`。找无标签输入框可传 `{"editable":true}`；`tap_text` 支持 `direction:"up"`，默认向下。
 
-聊天可先用 `open_contact({name:"张小明"})`，重名时按返回备注补充 `hint`。进入会话后调用 `fill_chat({recipient:"张小明",text:"明天十点见"})`，只填写草稿，不发送。需要检查候选时调用 `find_chat_input`；填写会先核对会话标题，并在必要时从语音切回文字。
+只需核对文字和控件状态时，在 `read_screen` 的 `arguments` 传 `{"include_image":false}`，跳过截图。每次读取都会更新节点编号。
+
+在聊天应用中，`fill_chat({recipient:"张小明",text:"明天十点见",open_if_needed:true})` 可以查人、核对会话并填写草稿。重名时按候选备注补充用户给的 `hint`。只需要打开会话时用 `open_contact`。只需要查输入框时用 `find_chat_input`。填写会在必要时从语音切回文字，发送须单独确认。
 
 `read_ui_source` 返回运行控件原始文字、类名、资源 ID 和边界，并在本次任务中包含更多非重要控件。`font_reference({text:"张小明 发送"})` 加载公开字体生成参照图；它不是屏幕截图，调用后须重新观察再点击。私有字体、数据库与反编译源码不在读取范围内。
 

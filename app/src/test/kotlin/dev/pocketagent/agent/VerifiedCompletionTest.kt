@@ -55,6 +55,17 @@ class VerifiedCompletionTest {
         assertTrue(device.actions.isEmpty())
     }
 
+    @Test fun aGestureInterruptedAfterSendingUsesTheMatchingMessageEvidence() = runTest {
+        val llm = FakeLlm(listOf(call("tap_text", """{"text":"发送","scrolls":0,"finish_if_verified":true}""")))
+        val device = FakeDevice(listOf(chat(null, node("b3", text = body))), resultFor = {
+            ActionResult.Failed("手势中断", mayHaveEffect = true)
+        })
+        val ui = FakeUi()
+        assertTrue(loop(llm, device, ui).run("发送已有草稿", chat(body)).success)
+        assertEquals(1, device.actions.size)
+        assertEquals(1, ui.confirmRequests.size)
+    }
+
     @Test fun anUnverifiedSendCannotUseTheFastFinishFlag() = runTest {
         val llm = FakeLlm(listOf(call("tap_text", """{"text":"发送","scrolls":0,"finish_if_verified":true}"""),done()))
         assertFalse(loop(llm,FakeDevice(listOf(chat(body)))).run("发送草稿",chat(body)).success)

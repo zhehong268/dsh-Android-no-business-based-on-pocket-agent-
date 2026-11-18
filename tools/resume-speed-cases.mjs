@@ -35,8 +35,17 @@ export async function resumeSpeedCases({run,rpc,check,saveResult,shot,out,setRes
     const reads=[],ticks=[];
     for(let i=0;i<5;i++){const at=performance.now();const result=await rpc('read_ui_source');assert.ok(!result.isError);reads.push(Math.round(performance.now()-at));ticks.push(Number(text(result).match(/tick=(\d+)/)?.[1]));}
     const sorted=[...reads].sort((a,b)=>a-b);
-    writeFileSync(`${out}/refresh-timings.json`,JSON.stringify({source_with_image_ms:reads,ticks,median_ms:sorted[2],max_ms:sorted[4],idle_wait_cap_ms:300},null,2));
     check('持续刷新页面及时返回最新内容而非旧缓存',Math.max(...reads)<1500&&ticks.every((value,i)=>Number.isFinite(value)&&(i===0||value>ticks[i-1])));
+    const textReads=[],textTicks=[];
+    for(let i=0;i<5;i++) {
+      await delay(30); // The fixture advances every 20 ms. Only time the read below.
+      const at=performance.now(), result=await rpc('read_screen',{include_image:false});
+      assert.ok(!result.isError&&!result.content.some(c=>c.type==='image'));
+      textReads.push(Math.round(performance.now()-at));
+      textTicks.push(Number(text(result).match(/tick=(\d+)/)?.[1]));
+    }
+    writeFileSync(`${out}/refresh-timings.json`,JSON.stringify({source_with_image_ms:reads,ticks,median_ms:sorted[2],max_ms:sorted[4],text_only_ms:textReads,text_ticks:textTicks,text_median_ms:[...textReads].sort((a,b)=>a-b)[2]},null,2));
+    check('文字读屏不等待截图且连续返回新的页面计数',textTicks.every((value,i)=>Number.isFinite(value)&&(i===0||value>textTicks[i-1])));
     await rpc('control_stop');
 
     await open('chat');

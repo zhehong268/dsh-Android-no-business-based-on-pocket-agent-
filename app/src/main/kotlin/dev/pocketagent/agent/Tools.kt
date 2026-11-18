@@ -19,7 +19,7 @@ sealed interface ToolCall {
     data class TypeText(val nodeId: String, val text: String, val submit: Boolean = false, val mode: String = "replace", val finishIfVerified:Boolean=false) : ToolCall
     data class Scroll(val direction: Direction, val nodeId: String?) : ToolCall
     data class ZoomScreen(val left:Int,val top:Int,val right:Int,val bottom:Int) : ToolCall
-    data object ReadScreen : ToolCall
+    data class ReadScreen(val includeImage: Boolean = true) : ToolCall
     data class ReadElement(val nodeId: String) : ToolCall
     data class FindElements(val text: String, val container: String?, val role: String? = null, val editable: Boolean? = null, val viewId: String? = null) : ToolCall
     data class PerformSteps(val steps:List<SequenceStep>,val finishIfVerified:Boolean=false,val summary:String?=null) : ToolCall
@@ -27,7 +27,14 @@ sealed interface ToolCall {
     data object FindChatInput : ToolCall
     data class FontReference(val text:String) : ToolCall
     data class OpenContact(val name:String,val hint:String="") : ToolCall
-    data class FillChat(val recipient:String,val text:String,val mode:String="replace",val finishIfVerified:Boolean=false) : ToolCall
+    data class FillChat(
+        val recipient: String,
+        val text: String,
+        val mode: String = "replace",
+        val finishIfVerified: Boolean = false,
+        val openIfNeeded: Boolean = false,
+        val hint: String = "",
+    ) : ToolCall
     data class TapMark(val index: Int, val observation: Int, val irreversible: Boolean,val finishIfVerified:Boolean=false) : ToolCall
     data class WaitFor(val text: String, val seconds: Int, val checked: Boolean? = null) : ToolCall
     data class Checkpoint(val goal: String, val completed: String, val next: String, val expected: String) : ToolCall
@@ -147,12 +154,21 @@ object Tools {
             Field("name",Kind.STRING,"用户指定的完整姓名、备注或群名。",min=1,max=100),
             Field("hint",Kind.STRING,"用户提供的额外备注或标识，用于重名区分，不能编造。",required=false,min=1,max=150),
         )) { ToolCall.OpenContact(it["name"] as String,it["hint"] as String? ?: "") },
-        Spec("fill_chat","核对顶部完整收件人后自动找正文框并粘贴，不逐字操作用户键盘。找不到时检查文字/语音切换；收件人不符或正文框歧义时停止。只填草稿，不发送。",listOf(
-            Field("recipient",Kind.STRING,"已核对的完整聊天标题，必须与用户指定对象一致。",min=1,max=100),
+        Spec("fill_chat","核对完整收件人，自动找正文框并粘贴草稿。用 open_if_needed 一次完成联系人导航和填写，重名或正文框不明确时停止。发送需要单独确认。",listOf(
+            Field("recipient",Kind.STRING,"用户指定的完整姓名、备注或聊天标题。",min=1,max=100),
             Field("text",Kind.STRING,"原样填入的正文。",min=0,max=4000),
             Field("mode",Kind.CHOICE,"replace 替换、append 追加、clear 清空。",required=false,choices=listOf("replace","append","clear")),
             Field("finish_if_verified",Kind.BOOLEAN,"只要求填写草稿时可在核验后直接结束。",required=false),
-        )) { ToolCall.FillChat(it["recipient"] as String,it["text"] as String,it["mode"] as String? ?: "replace",it["finish_if_verified"] as Boolean? ?: false) },
+            Field("open_if_needed",Kind.BOOLEAN,"尚未进入会话时，按完整姓名导航到该联系人。默认 false。",required=false),
+            Field("hint",Kind.STRING,"用户提供的额外备注，用于区分重名。",required=false,min=1,max=150),
+        )) { a -> ToolCall.FillChat(
+            recipient = a["recipient"] as String,
+            text = a["text"] as String,
+            mode = a["mode"] as String? ?: "replace",
+            finishIfVerified = a["finish_if_verified"] as Boolean? ?: false,
+            openIfNeeded = a["open_if_needed"] as Boolean? ?: false,
+            hint = a["hint"] as String? ?: "",
+        ) },
         Spec("perform_steps","明确的安全步骤优先连续执行 1 到 4 步。下一页节点不必预知，每步会按语义重新找并核验；重名、失败或需确认立即停止。最后一步可自动核验并收尾，省去无意义的下一轮模型等待。发送和删除必须单独调用。",listOf(
             Field("steps",Kind.STEPS,"动作计划。目标使用文字、类型、可输入状态或资源 id，不能用旧节点或坐标。"),
             Field("finish_if_verified",Kind.BOOLEAN,"整个用户任务完成时设为 true；最后一步必须提供 expect_text，且须通过本地核验。",required=false),
@@ -233,7 +249,9 @@ object Tools {
             val l=a["left"] as Int;val t=a["top"] as Int;val r=a["right"] as Int;val b=a["bottom"] as Int
             require(r>l && b>t) { "区域宽高必须大于零" };ToolCall.ZoomScreen(l,t,r,b)
         },
-        Spec("read_screen", "重新观察当前屏幕；稀疏界面会自动附图。", emptyList()) { ToolCall.ReadScreen },
+        Spec("read_screen", "重新读取屏幕控件。只需核对文字、聊天标题或输入状态时用 include_image=false。", listOf(
+            Field("include_image", Kind.BOOLEAN, "是否附上截图，默认 true。", required=false),
+        )) { ToolCall.ReadScreen(it["include_image"] as Boolean? ?: true) },
         Spec("read_element", "读取节点完整文本与状态，避免题干或消息被截断。", listOf(nodeId("最新节点。", true))) { a -> ToolCall.ReadElement(a["node_id"] as String) },
         Spec("find_elements", "只查找不点击。可组合文字、控件类型、是否可输入、资源 id；找无标签输入框可只给 editable=true。", listOf(
             Field("text", Kind.STRING, "目标文字，可省略。", required=false, min=1, max=100),

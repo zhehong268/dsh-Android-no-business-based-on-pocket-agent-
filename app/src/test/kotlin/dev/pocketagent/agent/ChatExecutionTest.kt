@@ -81,6 +81,19 @@ class ChatExecutionTest {
         assertEquals(EndReason.STEP_LIMIT,loop(llm,device,limit=2).run("打开张小明",initial).reason)
         assertEquals(2,device.actions.size)
     }
+    @Test fun fillChatCanNavigateAndFinishAVerifiedDraftInOneModelCall() = runTest {
+        val device = ContactDevice()
+        val initial = device.readScreen()
+        val llm = FakeLlm(listOf(call("fill_chat", """{"recipient":"张小明","text":"新草稿","open_if_needed":true,"finish_if_verified":true}""")))
+        val ui = FakeUi()
+        val outcome = loop(llm, device, ui).run("给张小明写草稿", initial)
+        assertTrue(outcome.success)
+        assertEquals("新草稿", device.draft)
+        assertEquals(1, llm.turns.size)
+        assertEquals(6, device.actions.size)
+        assertTrue(ui.confirmRequests.isEmpty())
+    }
+
     @Test fun aChangedConversationCannotBeSentUsingTheOldRecipient()=runTest {
         val llm=FakeLlm(listOf(call("fill_chat","""{"recipient":"张小明","text":"草稿"}"""),call("tap_text","""{"text":"发送","scrolls":0}"""),done(false)))
         val device=FakeDevice(listOf(chat(),chat(person="李四",body="草稿")))
