@@ -196,7 +196,7 @@ class McpHttpServer(
         const val MAX_HEADER = 8 * 1024
         const val MAX_FAILURES = 5
         const val LOCKOUT_MS = 60_000L
-        const val RUN_LIMIT_MS = 5 * 60_000L
+        const val RUN_LIMIT_MS = 30 * 60_000L
         private const val READ_TIMEOUT_MS = 10_000
         private const val READ_DEADLINE_MS = 15_000L
         private const val MAX_CONNECTIONS = 8

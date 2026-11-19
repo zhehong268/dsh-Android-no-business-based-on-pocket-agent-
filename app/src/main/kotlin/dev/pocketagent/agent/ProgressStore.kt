@@ -26,6 +26,11 @@ class ProgressStore(private val store: KeyValueStore) {
     private val json = Json { ignoreUnknownKeys = true }
     fun load(): TaskProgress? = try { store.getString(KEY)?.let { json.decodeFromString<TaskProgress>(it) } } catch (_: Exception) { null }
     private fun archived():List<TaskProgress> = try { store.getString(ARCHIVE)?.let { json.decodeFromString<List<TaskProgress>>(it) }.orEmpty() } catch(_:Exception) { emptyList() }
+    fun requiredTask(): String? = store.getString(REQUIRED)?.takeIf(String::isNotBlank)
+    fun requireContinuation(task: String) = store.putString(REQUIRED, task)
+    fun releaseContinuation(task: String) {
+        if (requiredTask() == task) store.putString(REQUIRED, null)
+    }
     fun load(task:String):TaskProgress? = load()?.takeIf { it.task==task } ?: archived().firstOrNull { it.task==task }
     fun save(progress: TaskProgress) {
         val entries=(listOfNotNull(load())+archived()).filter { it.task!=progress.task }.distinctBy { it.task }.take(11)
@@ -39,6 +44,7 @@ class ProgressStore(private val store: KeyValueStore) {
         if(task==null || load()?.task==target)store.putString(KEY,remaining.firstOrNull()?.let { json.encodeToString(it) })
     }
     companion object {
+        private const val REQUIRED = "task.progress.required.v1"
         const val KEY = "task.progress.v1"
         private const val ARCHIVE = "task.progress.recent.v1"
         fun isContinuation(text:String)=text.trim().trimEnd('。','！','!') in setOf("继续","继续任务","继续执行","接着做","继续上个任务")

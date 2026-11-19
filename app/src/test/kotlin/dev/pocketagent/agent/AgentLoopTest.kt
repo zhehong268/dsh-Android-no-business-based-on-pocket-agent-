@@ -84,6 +84,7 @@ class AgentLoopTest {
         gateBlocks: BlockedApps = BlockedApps(),
         filterBlocks: BlockedApps = BlockedApps(),
         shortenScreens: Boolean = false,
+        conversation: TaskConversation? = null,
     ) = AgentLoop(
         llm, device, SafetyGate(gateBlocks, own), playbooks, ScreenSerializer(own), ui, maxSteps, confirmTimeoutMs, nowMs,
         notifications = notifications,
@@ -91,6 +92,7 @@ class AgentLoopTest {
         wallMs = wallMs,
         shortenScreens = shortenScreens,
         autoVision = false,
+        taskConversation = conversation,
     )
 
     /** Timing depends on the clock, so outcomes are compared without it unless a test is about timing. */
@@ -110,6 +112,29 @@ class AgentLoopTest {
         val llm = FakeLlm(listOf(done("bought milk")))
         val outcome = loop(llm, FakeDevice(listOf(start))).run("buy milk", start)
         assertEquals(TaskOutcome(EndReason.DONE, true, "bought milk"), outcome.withoutStats())
+    }
+
+    @Test fun quizCanRunPastTheOldDecisionLimitAndUsesSmallScrolls() = runTest {
+        val calls = List(100) { call("checkpoint", "goal" to "按顺序做题", "completed" to "${it + 1}", "next" to "看下一题", "expected" to "题号递增") }
+        val llm = FakeLlm(calls + listOf(scroll(), done()))
+        val device = FakeDevice(listOf(start, distinctScreen("next")))
+        val outcome = loop(llm, device).run("做题", start)
+        assertTrue(outcome.success)
+        assertEquals(102, outcome.stats.steps)
+        assertEquals(DeviceAction.Scroll(dev.pocketagent.device.Direction.DOWN, null, smallStep = true), device.actions.single())
+    }
+
+    @Test fun supplementIsDeliveredToTheSameTaskAndReceivesAVisibleReply() = runTest {
+        val conversation = TaskConversation()
+        val llm = FakeLlm(listOf(call("task_reply", "text" to "先核对第 8 题"), done()))
+        val device = FakeDevice(listOf(start))
+        assertTrue(conversation.submit("先看第 8 题"))
+        assertTrue(loop(llm, device, conversation = conversation).run("原来的答题任务", start).success)
+        assertEquals(1, llm.sessions)
+        assertTrue(llm.turns.first().text.contains("先看第 8 题"))
+        assertTrue(llm.turns.first().text.contains("任务：原来的答题任务"))
+        assertEquals(TaskConversation.Line(false, "先核对第 8 题"), conversation.messages().last())
+        assertTrue(device.actions.isEmpty())
     }
 
     @Test fun blockedForegroundAppRefusedBeforeAnyModelCall() = runTest {
@@ -355,7 +380,7 @@ class AgentLoopTest {
     }
 
     @Test fun maxStepsAboveTheNodeIdLetterCycleIsRejected() = runTest {
-        assertFailsWith<IllegalArgumentException> { loop(FakeLlm(emptyList()), FakeDevice(listOf(start)), maxSteps = 61) }
+        assertFailsWith<IllegalArgumentException> { loop(FakeLlm(emptyList()), FakeDevice(listOf(start)), maxSteps = 161) }
     }
 
     @Test fun confirmationTargetIsOneLineEvenWhenTheLabelHasLineBreaks() = runTest {
@@ -571,7 +596,7 @@ class AgentLoopTest {
         assertTrue(vision.tools.any { it.name == "screenshot" })
         // quiz_record needs a granted folder and second_opinion needs a second model; neither is set up here.
         assertEquals(
-            Tools.definitions.size - 4 - Tools.NOTIFICATION_TOOLS.size - Tools.FILE_TOOLS.size - Tools.QUIZ_TOOLS.size,
+            Tools.definitions.size - 5 - Tools.NOTIFICATION_TOOLS.size - Tools.FILE_TOOLS.size - Tools.QUIZ_TOOLS.size,
             text.tools.size,
         )
     }

@@ -87,7 +87,10 @@ try{
       const first=++modelRequests===1;
       const name=scripted?.name||(first?'checkpoint':'done');
       const args=scripted?.args||(first?{goal:'核对本地任务面板',completed:'观察页面',next:'保存测试结果',expected:'任务结束后面板消失'}:{summary:'本地生命周期检查完成',success:true});
-      res.setHeader('content-type','application/json');res.end(JSON.stringify({choices:[{message:{role:'assistant',content:null,tool_calls:[{id:'fixture-'+modelRequests,type:'function',function:{name,arguments:JSON.stringify(args)}}]},finish_reason:'tool_calls'}],usage:{prompt_tokens:1,completion_tokens:1}}));
+      const timer=setTimeout(()=>{
+        res.setHeader('content-type','application/json');res.end(JSON.stringify({choices:[{message:{role:'assistant',content:null,tool_calls:[{id:'fixture-'+modelRequests,type:'function',function:{name,arguments:JSON.stringify(args)}}]},finish_reason:'tool_calls'}],usage:{prompt_tokens:1,completion_tokens:1}}));
+      },scripted?.delayMs||0);
+      res.once('close',()=>clearTimeout(timer));
     },modelResponder?100:1400));return;
   }if(req.url.startsWith('/event')){events.push(new URL(req.url,'http://local').searchParams.get('name'));res.end('ok');return;}res.setHeader('content-type','text/html;charset=utf-8');res.end(req.url.startsWith('/canvas')?canvas:req.url.startsWith('/chat-pending')?pendingChat:req.url.startsWith('/chat')?chat:html);});
   await new Promise(r=>server.listen(18100,'0.0.0.0',r));
@@ -234,9 +237,17 @@ try{
   await delay(500);check('模型错误后面板自动移除',!run('shell','dumpsys','window','windows').includes('dsh-task-panel'));
   check('模型错误后显示结果弹窗',hasTaskResult(run));
   shot('14-failure-popup-dark');
-  tapTaskResult(run,'close');
-  await delay(250);
-  check('关闭失败弹窗不会自动重试',!hasTaskResult(run)&&!run('shell','dumpsys','window','windows').includes('dsh-task-panel'));
+  const blocked = await rpc('run_task',{task:'另一个手机任务'});
+  check('失败后拒绝新任务且保留继续入口',blocked.isError && hasTaskResult(run));
+  failModel=false;
+  await delay(500);
+  tapTaskResult(run);
+  const locked=()=>run('shell','run-as','dev.pocketagent','cat','shared_prefs/dsh_progress.xml').includes('task.progress.required.v1');
+  for(let i=0;i<35 && (locked() || !hasTaskResult(run));i++)await delay(200);
+  shot('14-continue-result');
+  check('继续原任务完成后解除锁定',hasTaskResult(run) && !locked());
+  await delay(450);
+  tapTaskResult(run);
   run('shell','cmd','uimode','night','no');
   }
   if(process.env.DSH_NATIVE_FIXTURE==='1') {

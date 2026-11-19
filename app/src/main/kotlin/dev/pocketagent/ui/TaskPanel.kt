@@ -15,7 +15,12 @@ import dev.pocketagent.ui.kit.Kit
 
 /** Drag any non-button area. A stop tap has its own hit target, never the drag listener. */
 @SuppressLint("ClickableViewAccessibility")
-class TaskPanel(private val context: Context, onStop: () -> Unit) {
+class TaskPanel(private val context: Context, private val onChat: () -> Unit = {}, onStop: () -> Unit) {
+    private val chat = Button(context).apply {
+        text = "对话"
+        textSize = 13f
+        setOnClickListener { onChat() }
+    }
     private val title = Kit.text(context, "dsh · 运行中 · 可拖动", 13f, 600, R.color.pa_ink).apply {
         minimumHeight=Overlays.dp(context,32)
         gravity=Gravity.CENTER_VERTICAL
@@ -33,6 +38,7 @@ class TaskPanel(private val context: Context, onStop: () -> Unit) {
         action.maxLines = 3
         addView(plan)
         addView(action)
+        addView(chat, LinearLayout.LayoutParams(-1, Overlays.dp(context, 48)))
         addView(Button(context).apply {
             text = "停止"
             textSize = 13f
@@ -55,6 +61,9 @@ class TaskPanel(private val context: Context, onStop: () -> Unit) {
     private var visible = true
     private var lastText = "准备操作"
     private var waiting = false
+    private var chatAvailable = false
+
+    fun setChatAvailable(value: Boolean) { chatAvailable = value; refresh() }
 
     init {
         var startX = 0
@@ -118,6 +127,8 @@ class TaskPanel(private val context: Context, onStop: () -> Unit) {
         if (!running) { close(); return }
         title.text = if (waiting) "dsh · 等待确认 · 可拖动" else "dsh · 运行中 · 可拖动"
         action.text = lastText
+        chat.visibility = if (chatAvailable) View.VISIBLE else View.GONE
+        chat.isEnabled = !waiting
         view.visibility = if (visible) View.VISIBLE else View.INVISIBLE
         if (!shown) shown = Overlays.add(context, view, params)
     }

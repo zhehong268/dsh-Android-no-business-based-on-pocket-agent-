@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import dev.pocketagent.android.LocalAddress
 import dev.pocketagent.android.PocketAccessibilityService
@@ -38,7 +39,6 @@ import dev.pocketagent.llm.AUTH_HEADER_DSH
 import dev.pocketagent.llm.CheckResult
 import dev.pocketagent.llm.ProviderConfig
 import dev.pocketagent.llm.ProviderKind
-import dev.pocketagent.setup.AccessibilityState
 import dev.pocketagent.setup.MicState
 import dev.pocketagent.setup.SetupFacts
 import dev.pocketagent.setup.SetupModel
@@ -66,6 +66,7 @@ class MainActivity : ThemedActivity() {
     private var balanceJob: Job? = null
 
     private val balanceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var connectionWait: Job? = null
 
     private val files by lazy { SafFiles(this, SafFiles.store(this)) }
     private lateinit var content: FrameLayout
@@ -169,6 +170,7 @@ class MainActivity : ThemedActivity() {
 
     override fun onPause() {
         resumedNow = false
+        connectionWait?.cancel()
         super.onPause()
     }
 
@@ -254,11 +256,23 @@ class MainActivity : ThemedActivity() {
     }
 
     private fun runTask(text: String) {
-        val host = TaskScreenHost.current
-        if (host == null) {
+        withTaskHost { it.startSetupTask(text) }
+    }
+
+    private fun withTaskHost(action: (TaskScreenHost) -> Unit) {
+        TaskScreenHost.current?.let { action(it); return }
+        if (!accessibilityOn()) {
             Toast.makeText(this, "请先在无障碍设置中开启 dsh。", Toast.LENGTH_LONG).show()
-        } else {
-            host.startSetupTask(text)
+            return
+        }
+        if (connectionWait?.isActive == true) return
+        Toast.makeText(this, "无障碍已授权，正在等待系统连接。", Toast.LENGTH_SHORT).show()
+        connectionWait = balanceScope.launch {
+            repeat(30) {
+                TaskScreenHost.current?.let { action(it); return@launch }
+                delay(200)
+            }
+            Toast.makeText(this@MainActivity, "系统尚未连接 dsh 无障碍服务，请稍后重试。", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -270,11 +284,7 @@ class MainActivity : ThemedActivity() {
         }
     }
 
-    private fun accessibilityOn() = AccessibilityState.isEnabled(
-        Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES),
-        packageName,
-        PocketAccessibilityService::class.java.name,
-    )
+    private fun accessibilityOn() = PocketAccessibilityService.isEnabled(this)
 
     private fun notificationsOn(): Boolean = isListenerEnabled(
         Settings.Secure.getString(contentResolver, "enabled_notification_listeners"),
@@ -327,10 +337,14 @@ class MainActivity : ThemedActivity() {
     private fun homeState(): HomeState {
         val eval = SetupModel.evaluate(facts())
         val current = eval.steps.firstOrNull { it.status == StepStatus.CURRENT }?.step
+        val progress = dev.pocketagent.agent.ProgressStore(dev.pocketagent.android.PrefsKeyValueStore(getSharedPreferences("dsh_progress", MODE_PRIVATE)))
+        val required = progress.requiredTask()
+        val pending = if (required == null) progress.load() else progress.load(required)
         val attention = when {
-            eval.isReady && dev.pocketagent.agent.ProgressStore(dev.pocketagent.android.PrefsKeyValueStore(getSharedPreferences("dsh_progress", MODE_PRIVATE))).load() != null -> {
-                val pending = dev.pocketagent.agent.ProgressStore(dev.pocketagent.android.PrefsKeyValueStore(getSharedPreferences("dsh_progress", MODE_PRIVATE))).load()!!
-                Attention("有未完成任务", pending.goal.ifBlank { pending.task }.take(150), "继续任务") { TaskScreenHost.current?.resumeTask(pending.task) }
+            eval.isReady && (required != null || pending != null) -> {
+                val task = required ?: checkNotNull(pending).task
+                val goal = pending?.goal?.takeIf(String::isNotBlank) ?: task
+                Attention("有未完成任务", goal.take(150), "继续任务") { withTaskHost { it.resumeTask(task) } }
             }
             eval.isReady -> null
             current == SetupStep.ACCESSIBILITY && eval.of(SetupStep.MODEL_CHECK).status == StepStatus.DONE ->
@@ -338,7 +352,11 @@ class MainActivity : ThemedActivity() {
             else -> Attention("完成设置", "添加 AI 服务商、密钥和模型，再开启无障碍。", "继续设置") { openSetup() }
         }
         return HomeState(
-            statusDetail = "模型正常 · 无障碍已开启",
+            statusDetail = when {
+                !accessibilityOn() -> "无障碍未开启"
+                TaskScreenHost.current == null -> "无障碍已授权 · 等待系统连接"
+                else -> "无障碍已连接"
+            },
             attention = attention,
             recent = HistoryFormat.recent(history.all()),
             usage = history.all().let { all ->

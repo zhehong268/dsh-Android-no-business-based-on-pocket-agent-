@@ -7,7 +7,7 @@ sealed interface DeviceAction {
     data class TapAt(val x: Int, val y: Int) : DeviceAction
     /** [submit] presses the keyboard's Enter or Search key after the text is in. */
     data class TypeText(val node: ScreenNode, val text: String, val submit: Boolean = false, val mode: String = "replace") : DeviceAction
-    data class Scroll(val direction: Direction, val node: ScreenNode?) : DeviceAction
+    data class Scroll(val direction: Direction, val node: ScreenNode?, val smallStep: Boolean = false) : DeviceAction
     data class LongPress(val node: ScreenNode) : DeviceAction
     data class DoubleTap(val node: ScreenNode) : DeviceAction
     data class Drag(val fromX: Int, val fromY: Int, val toX: Int, val toY: Int, val durationMs: Int) : DeviceAction

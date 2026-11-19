@@ -36,7 +36,6 @@ import dev.pocketagent.llm.ProviderKind
 import dev.pocketagent.llm.ProviderPreset
 import dev.pocketagent.llm.ProviderPresets
 import dev.pocketagent.llm.Providers
-import dev.pocketagent.setup.AccessibilityState
 import dev.pocketagent.setup.CheckMessages
 import dev.pocketagent.setup.GuidanceStore
 import dev.pocketagent.setup.MicState
@@ -141,11 +140,7 @@ class SetupActivity : ThemedActivity() {
 
     // --- Facts ---
 
-    private fun accessibilityOn(): Boolean = AccessibilityState.isEnabled(
-        Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES),
-        packageName,
-        PocketAccessibilityService::class.java.name,
-    )
+    private fun accessibilityOn(): Boolean = PocketAccessibilityService.isEnabled(this)
 
     private fun notificationsOn(): Boolean = isListenerEnabled(
         Settings.Secure.getString(contentResolver, "enabled_notification_listeners"),
@@ -883,7 +878,7 @@ class SetupActivity : ThemedActivity() {
         body.addView(field, fieldParams(14))
         if (needsFirst != null) para(body, "请先完成“${titleFor(needsFirst)}”。", top = 10)
         val host = TaskScreenHost.current
-        if (needsFirst == null && host == null) para(body, "请在无障碍设置中开启 dsh，才能运行测试。", top = 10)
+        if (needsFirst == null && host == null) para(body, "无障碍已授权，正在等待系统连接。", top = 10)
         val run = Kit.primary(c, "运行首个任务") {
             val text = field.text.toString().trim()
             testTaskDraft = text

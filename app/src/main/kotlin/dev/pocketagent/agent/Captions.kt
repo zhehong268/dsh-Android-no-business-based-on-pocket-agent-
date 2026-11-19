@@ -16,6 +16,7 @@ object Captions {
     fun forReply(sender: String, app: String): String = "正在 ${oneLine(app)} 中回复 ${oneLine(sender)}"
 
     fun forAction(call: ToolCall, target: ScreenNode?): String = when (call) {
+        is ToolCall.TaskReply -> "正在答复"
         is ToolCall.ZoomScreen -> "正在放大屏幕区域"
         is ToolCall.ReadScreen -> "正在重新读屏"
         is ToolCall.ReadElement -> "正在读取完整内容"

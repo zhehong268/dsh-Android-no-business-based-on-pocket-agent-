@@ -19,14 +19,14 @@ class GesturePlanner(private val screen: Bounds, private val edgeInsetPx: Int) {
     }
 
     /** [direction] is the way the content scrolls, so the finger moves the opposite way. */
-    fun swipe(direction: Direction, within: Bounds?): SwipePath {
+    fun swipe(direction: Direction, within: Bounds?, smallStep: Boolean = false): SwipePath {
         val area = if (within == null) safe else clip(within)
         val cx = (area.left + area.right) / 2
         val cy = (area.top + area.bottom) / 2
         val w = area.right - area.left
         val h = area.bottom - area.top
-        val near = 25
-        val far = 75
+        val near = if (smallStep) 37 else 25
+        val far = if (smallStep) 63 else 75
         return when (direction) {
             Direction.DOWN -> SwipePath(Point(cx, area.top + h * far / 100), Point(cx, area.top + h * near / 100))
             Direction.UP -> SwipePath(Point(cx, area.top + h * near / 100), Point(cx, area.top + h * far / 100))

@@ -29,6 +29,7 @@ import dev.pocketagent.agent.AgentUi
 import dev.pocketagent.agent.BubbleLogic
 import dev.pocketagent.agent.ConfirmRequest
 import dev.pocketagent.agent.SummaryText
+import dev.pocketagent.agent.TaskConversation
 import dev.pocketagent.agent.VoiceUi
 import dev.pocketagent.device.DeviceAction
 import dev.pocketagent.device.DeviceUnavailable
@@ -63,6 +64,7 @@ import dev.pocketagent.ui.MainActivity
 import dev.pocketagent.ui.OverlayUi
 import dev.pocketagent.ui.SetupActivity
 import dev.pocketagent.ui.SummaryCard
+import dev.pocketagent.ui.TaskChatWindow
 import dev.pocketagent.ui.TaskInputActivity
 import dev.pocketagent.ui.TaskScreenHost
 import kotlinx.coroutines.CancellationException
@@ -96,7 +98,10 @@ class AgentSession(
 
     private val settler = Settler(now = SystemClock::uptimeMillis)
     private val logic = BubbleLogic()
-    private val caption = CaptionView(service) { stopRunningTask() }
+    private val caption = CaptionView(service, onChat = ::openTaskChat) { stopRunningTask() }
+    private val taskChat = TaskChatWindow(service)
+    private var conversation: TaskConversation? = null
+    private var failedBody = ""
     private val confirmCard = ConfirmCard(service)
     private val summaryCard = SummaryCard(service)
     private val overlayUi = OverlayUi(confirmCard, caption, ::openAnswerScreen)
@@ -128,7 +133,7 @@ class AgentSession(
     private fun currentClient(): LlmClient? {
         val config = repository.load() ?: return null
         return try {
-            Providers.create(ModelCapabilities.operator(config), HttpCaller(OkHttpTransport()))
+            Providers.create(ModelCapabilities.operator(config), HttpCaller(OkHttpTransport(callTimeoutMs = 240_000)))
         } catch (e: IllegalArgumentException) {
             null
         }
@@ -229,7 +234,8 @@ class AgentSession(
                 voter = if (pendingClient is DirectControlClient) null else voterClient(pendingMainModel),
                 progress = progress,
                 experiences = experiences,
-                maxSteps = if (pendingClient is DirectControlClient) 60 else 40,
+                maxSteps = if (pendingClient is DirectControlClient) 60 else 120,
+                taskConversation = conversation,
             )
         },
         guardedUi,
@@ -265,7 +271,7 @@ class AgentSession(
 
     /** Hide the bubble, read the screen without settling, show the bubble, keep the screen, open the task screen. */
     fun startBubbleTap() {
-        if (closed || tapJob?.isActive == true) return
+        if (closed || taskIsLive() || tapJob?.isActive == true || showRequiredContinuation()) return
         summaryCard.close()
         // The previous task's last spoken line stops with its card.
         if (!taskIsLive()) stopVoice()
@@ -301,11 +307,12 @@ class AgentSession(
     override fun startTask(text: String, spoken: Boolean) {
         if(ProgressStore.isContinuation(text)) {
             savedScreen=null;logic.taskScreenOpen=false
-            val pending=progress.load()
-            if(pending!=null)resumeTask(pending.task) else Toast.makeText(service,"没有可继续的未完成任务。",Toast.LENGTH_SHORT).show()
+            val pending=progress.requiredTask() ?: progress.load()?.task
+            if(pending!=null)resumeTask(pending) else Toast.makeText(service,"没有可继续的未完成任务。",Toast.LENGTH_SHORT).show()
             return
         }
         logic.taskScreenOpen = false
+        if (showRequiredContinuation()) return
         val screen = savedScreen
         savedScreen = null
         val task = text.trim()
@@ -317,11 +324,20 @@ class AgentSession(
         begin(task, screen, client, fromSetup = false, spoken = spoken)
     }
 
-    private fun begin(task: String, screen: Screen, client: LlmClient, fromSetup: Boolean, spoken: Boolean = false) {
+    private fun begin(
+        task: String, screen: Screen, client: LlmClient, fromSetup: Boolean,
+        spoken: Boolean = false, continuing: Boolean = false,
+    ) {
         // Every start runs on the main thread and the runner refuses a second task, so a live task keeps its UI.
         if (taskIsLive() || recorder != null) return
+        if (!continuing && showRequiredContinuation()) return
         summaryCard.close()
-        val quiz = QuizLabels.looksLikeQuiz(task)
+        failedBody = ""
+        taskChat.close()
+        conversation = if (client is DirectControlClient) null else TaskConversation {
+            withContext(Dispatchers.Main) { openTaskChat() }
+        }
+        caption.setChatAvailable(conversation != null)
         val stored = repository.load()?.let { ModelCapabilities.operator(it).model.lowercase() }.orEmpty()
         pendingClient = client
         pendingMainModel = stored
@@ -332,6 +348,7 @@ class AgentSession(
         val voice = if (spoken && settings.talkBack) voiceFor(task) else null
         voiceUi = voice
         activeUi = voice ?: overlayUi
+        progress.requireContinuation(task)
         if (runner.start(task, screen)) {
             taskText = task
             taskStartedAt = System.currentTimeMillis()
@@ -375,10 +392,11 @@ class AgentSession(
     /** The test task of the setup screen: go Home, read the settled screen, run the task there. */
     override fun startSetupTask(text: String) {
         if(ProgressStore.isContinuation(text)) {
-            val pending=progress.load()
-            if(pending!=null)resumeTask(pending.task) else Toast.makeText(service,"没有可继续的未完成任务。",Toast.LENGTH_SHORT).show()
+            val pending=progress.requiredTask() ?: progress.load()?.task
+            if(pending!=null)resumeTask(pending) else Toast.makeText(service,"没有可继续的未完成任务。",Toast.LENGTH_SHORT).show()
             return
         }
+        if (showRequiredContinuation()) return
         val task = text.trim()
         if(progress.load(task)!=null) { resumeTask(task);return }
         if (closed || remoteInFlight || task.isEmpty() || task.length > TaskInputActivity.MAX_TEXT || taskIsLive()) return
@@ -405,8 +423,13 @@ class AgentSession(
     override fun resumeTask(text:String,previousSummary:String) {
         val task=text.trim()
         if(closed || remoteInFlight || taskIsLive() || tapJob?.isActive==true || task.isBlank())return
+        if (progress.requiredTask()?.let { it != task } == true) {
+            showRequiredContinuation()
+            return
+        }
         val client=currentClient() ?: run {
-            Toast.makeText(service, "请先在设置中配置模型，再继续任务。", Toast.LENGTH_LONG).show()
+            openSetup()
+            Toast.makeText(service, "请配置模型后继续原任务。", Toast.LENGTH_LONG).show()
             return
         }
         val saved=progress.load(task) ?: dev.pocketagent.agent.TaskProgress(task,
@@ -428,11 +451,33 @@ class AgentSession(
                     device.perform(DeviceAction.Back)
                     screen=device.readScreen()
                 }
-                withContext(Dispatchers.Main) { if(!closed)begin(task,screen,client,fromSetup=false) }
+                withContext(Dispatchers.Main) { if(!closed)begin(task,screen,client,fromSetup=false,continuing=true) }
             } catch(e:CancellationException) { throw e }
-            catch(e:DeviceUnavailable) { withContext(Dispatchers.Main) { tapFailed(e.reason) } }
-            catch(_:RuntimeException) { withContext(Dispatchers.Main) { tapFailed("无法恢复任务页面，请打开原应用后继续任务。") } }
+            catch(e:DeviceUnavailable) { withContext(Dispatchers.Main) { continuationFailed(task, e.reason) } }
+            catch(_:RuntimeException) { withContext(Dispatchers.Main) { continuationFailed(task, "无法恢复任务页面，请打开原应用后继续任务。") } }
         }
+    }
+
+    private fun continuationFailed(task: String, reason: String) {
+        if (closed) return
+        progress.requireContinuation(task)
+        failedBody = reason
+        device.dropHandles()
+        showRequiredContinuation()
+    }
+
+    private fun showRequiredContinuation(): Boolean {
+        val required = progress.requiredTask() ?: return false
+        if (!taskIsLive() && !closed) {
+            val body = failedBody.ifBlank { "请继续上次任务。上次目标：" + (progress.load(required)?.goal?.takeIf(String::isNotBlank) ?: required).take(150) }
+            summaryCard.showResult("继续未完成任务", body) { resumeTask(required) }
+        }
+        return true
+    }
+
+    private fun openTaskChat() {
+        if (runner.state.value != AgentState.Running || closed || hiddenForRead || hiddenForLock || keyguard?.isKeyguardLocked == true) return
+        conversation?.let(taskChat::show)
     }
 
     override fun dropSavedScreen() {
@@ -466,6 +511,8 @@ class AgentSession(
         listener = null
         overlayUi.closeAll()
         TaskInputActivity.closeAnswerScreen()
+        taskChat.close()
+        conversation = null
         caption.close()
         confirmCard.close()
         summaryCard.close()
@@ -488,11 +535,13 @@ class AgentSession(
         val live = state is AgentState.Running || state is AgentState.WaitingForUser
         caption.setRunning(live)
         service.subscribeToTaskEvents(live)
+        if (state != AgentState.Running) taskChat.close()
         when (state) {
             is AgentState.Finished -> {
                 val outcome = state.outcome
                 val task = taskText
-                val canContinue = !outcome.success && directControl == null && task.isNotBlank()
+                val canContinue = !outcome.success && task.isNotBlank()
+                if (outcome.success) progress.releaseContinuation(task)
                 val savedSummary = SummaryText.forHistory(outcome)
                 directControl?.close(state.outcome.summary); directControl = null
                 if (remoteInFlight) remoteInFlight = false
@@ -511,12 +560,14 @@ class AgentSession(
                     else -> "任务失败 · $reason"
                 }
                 val body = SummaryText.body(outcome).ifBlank { if (outcome.success) "操作已结束。" else "未返回详细原因。" }
+                failedBody = if (canContinue) body else ""
                 endTask(title, body, if (canContinue) ({ resumeTask(task, savedSummary) }) else null)
             }
             AgentState.Stopped -> {
                 directControl?.close("用户在手机上停止了控制。"); directControl = null
                 remoteInFlight = false
                 setupTaskRunning = false
+                progress.releaseContinuation(taskText)
                 record(false, "被你停止；进度已保留，可从首页继续。", 0)
                 if (!taskIsLive()) stopVoice()
                 endTask(SummaryText.stoppedTitle(), "可在任务记录里查看本次任务。")
@@ -540,6 +591,8 @@ class AgentSession(
         overlayUi.closeAll()
         TaskInputActivity.closeAnswerScreen()
         device.dropHandles()
+        taskChat.close()
+        conversation = null
         summaryCard.showResult(title, withSpeechNote(body), onContinue)
     }
 
@@ -605,6 +658,10 @@ class AgentSession(
     private suspend fun runFromComputer(task: String): TaskReply = withContext(Dispatchers.Main) {
         if(dev.pocketagent.ui.ChatActivity.visible)return@withContext TaskReply.Refused("聊天答疑正在前台，请先退出聊天。")
         if (closed) return@withContext TaskReply.Refused("dsh 正在停止。")
+        if (progress.requiredTask() != null && !taskIsLive()) {
+            showRequiredContinuation()
+            return@withContext TaskReply.Refused("请先在手机上继续未完成任务。")
+        }
         if (remoteInFlight || taskIsLive() || recorder != null || tapJob?.isActive == true || logic.taskScreenOpen) {
             return@withContext TaskReply.Refused("手机正忙，做不了这件事。")
         }
@@ -661,6 +718,7 @@ class AgentSession(
         if (name == "control_start") {
             val client=withContext(Dispatchers.Main) {
                 if (closed || dev.pocketagent.ui.ChatActivity.visible || taskIsLive() || remoteInFlight || recorder != null || tapJob?.isActive == true || logic.taskScreenOpen || keyguard?.isKeyguardLocked == true) return@withContext null
+                if (showRequiredContinuation()) return@withContext null
                 remoteInFlight=true
                 try {
                     val task=(args["task"] as JsonPrimitive).content
@@ -763,6 +821,7 @@ class AgentSession(
     /** The caption shows only when neither a screen read or gesture nor the lock screen hides it. */
     private fun applyOverlayVisibility() {
         val visible = !hiddenForRead && !hiddenForLock
+        if (hiddenForLock) taskChat.close()
         caption.setVisible(visible)
     }
 

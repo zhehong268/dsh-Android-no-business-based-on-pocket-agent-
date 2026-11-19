@@ -3,6 +3,11 @@ package dev.pocketagent.android
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
+import android.content.Context
+import android.provider.Settings
+import android.view.accessibility.AccessibilityManager
+import dev.pocketagent.setup.AccessibilityState
+import dev.pocketagent.ui.MainActivity
 import android.view.accessibility.AccessibilityEvent
 
 /**
@@ -18,6 +23,7 @@ class PocketAccessibilityService : AccessibilityService() {
         subscribeToTaskEvents(false)
         running = this
         session = AgentSession(this, SetupStores.repository(this), SetupStores.settings(this), SetupStores.history(this))
+        MainActivity.noticeHistoryChanged()
     }
 
     /** Events arrive only while a task runs; each one only restarts the settle timer. */
@@ -78,12 +84,27 @@ class PocketAccessibilityService : AccessibilityService() {
         if (running === this) running = null
         session?.close()
         session = null
+        MainActivity.noticeHistoryChanged()
     }
 
     companion object {
         /** The connected service, for the Quick Settings tile. Main thread only. */
         @Volatile
         internal var running: PocketAccessibilityService? = null
+
+        fun isEnabled(context: Context): Boolean {
+            if (running != null) return true
+            val service = PocketAccessibilityService::class.java.name
+            val manager = context.getSystemService(AccessibilityManager::class.java)
+            if (manager?.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+                    ?.any { it.resolveInfo?.serviceInfo?.let { info -> info.packageName == context.packageName && info.name == service } == true } == true) {
+                return true
+            }
+            return AccessibilityState.isEnabled(
+                Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES),
+                context.packageName, service,
+            )
+        }
 
         private const val RECORDING_EVENT_TYPES = AccessibilityEvent.TYPE_VIEW_CLICKED or AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
 

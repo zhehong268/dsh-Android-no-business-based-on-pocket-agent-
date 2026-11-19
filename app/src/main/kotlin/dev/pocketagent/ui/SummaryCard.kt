@@ -141,7 +141,6 @@ class SummaryCard(private val context: Context) {
             if (again == null) {
                 actions.addView(Kit.primary(c, "知道了", 48) { choose(null) }, Kit.weight())
             } else {
-                actions.addView(Kit.secondary(c, "关闭", 48) { choose(null) }, Kit.weight())
                 actions.addView(Kit.primary(c, "继续任务", 48) { choose(again) }, Kit.weight())
             }
             col.addView(actions, Kit.lp().apply { topMargin = Overlays.dp(c, 14) })

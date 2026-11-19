@@ -7,10 +7,16 @@ const text=r=>r.content.filter(c=>c.type==='text').map(c=>c.text).join('\n');
 export async function resumeSpeedCases({run,rpc,check,saveResult,shot,out,setResponder}) {
   const uiFile='/sdcard/dsh-resume-speed-ui.xml';
   function nodes(){run('shell','uiautomator','dump',uiFile);const xml=run('shell','cat',uiFile);return [...xml.matchAll(/<node\s+([^>]+)>/g)].map(m=>Object.fromEntries([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(x=>[x[1],x[2]])));}
-  function tap(label){const n=nodes().find(n=>n.text===label);assert.ok(n,'界面没有找到：'+label);const b=n.bounds.match(/\d+/g).map(Number);run('shell','input','tap',String((b[0]+b[2])>>1),String((b[1]+b[3])>>1));}
   async function open(scene){run('shell','am','start','-S','-W','-n','dev.dsh.phonefixture/.FixtureActivity','--es','scene',scene);await delay(450);}
   async function start(task){const pending=rpc('control_start',{task});await delay(950);run('shell','input','tap','780','2180');const result=await pending;assert.ok(!result.isError,'测试控制会话启动');}
-  function panelBounds(){const block=run('shell','dumpsys','window','windows').split(/Window #/).find(s=>s.includes('dsh-task-panel'));assert.ok(block,'运行面板不存在');const m=block.match(/\b(?:mFrame|frame)=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]/);assert.ok(m,'无法读取面板位置');return m.slice(1).map(Number);}
+  function windowBounds(title){const block=run('shell','dumpsys','window','windows').split(/Window #/).find(s=>s.includes(title));const m=block?.match(/\b(?:mFrame|frame)=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]/);return m?.slice(1).map(Number);}
+  function panelBounds(){const bounds=windowBounds('dsh-task-panel');assert.ok(bounds,'运行面板不存在');return bounds;}
+  function tapConversation(fraction, bottomDp) {
+    const bounds=windowBounds('dsh-task-conversation');
+    assert.ok(bounds,'未找到任务对话窗口');
+    const density=Number(run('shell','wm','density').match(/(\d+)\s*$/)?.[1])/160;
+    run('shell','input','tap',String(Math.round(bounds[0]+(bounds[2]-bounds[0])*fraction)),String(Math.round(bounds[3]-bottomDp*density)));
+  }
   try {
     await open('chat');await start('仅在本地原生应用核对悬浮窗拖动和停止，不联系真实用户。');
     const before=panelBounds();
@@ -63,16 +69,20 @@ export async function resumeSpeedCases({run,rpc,check,saveResult,shot,out,setRes
     const failed=saveResult('speed-model-failure',await failing);check('模拟模型故障保留未完成任务',failed.isError);
     await delay(450);
     check('继续任务前失败弹窗可见',hasTaskResult(run));
-    tapTaskResult(run,'close');
+    const enabled=run('shell','settings','get','secure','enabled_accessibility_services').trim();
+    run('shell','input','keyevent','3');await delay(400);
     run('shell','am','start','-n','dev.pocketagent/.ui.MainActivity');await delay(600);
-    tap('记录');await delay(300);tap(goal);await delay(300);
-    const labels=nodes().map(n=>n.text);
-    check('失败记录提供继续任务入口',labels.includes('继续任务')&&!labels.includes('重新运行'));
-    tap('继续任务');
-    for(let i=0;i<20&&!hasTaskResult(run);i++)await delay(200);
-    check('从记录继续后再次失败仍显示结果弹窗',hasTaskResult(run)&&requests>=3);
+    check('切到后台再回来时无障碍授权和电脑连接都保留',enabled.includes('dev.pocketagent/') &&
+      run('shell','settings','get','secure','enabled_accessibility_services').trim()===enabled && !((await rpc('control_status')).isError));
+    tapTaskResult(run);
+    await delay(850);
+    for(let i=0;i<40&&(requests<3||!hasTaskResult(run));i++)await delay(200);
+    shot('speed-repeat-failure');
+    writeFileSync(`${out}/repeat-failure.json`,JSON.stringify({requests,resultShown:hasTaskResult(run)}));
+    check('从弹窗继续后再次失败仍显示结果弹窗',hasTaskResult(run)&&requests>=3);
     allowResume=true;
-    tapTaskResult(run,'continue');
+    await delay(500);
+    tapTaskResult(run);
     for(let i=0;i<30&&!resumed;i++)await delay(200);
     check('继续任务恢复原目标和进度并回到原应用',resumed?.originalGoal&&resumed?.savedProgress&&resumed?.originalApp);
     await delay(550);check('恢复任务完成后面板消失',!run('shell','dumpsys','window','windows').includes('dsh-task-panel'));
@@ -80,6 +90,50 @@ export async function resumeSpeedCases({run,rpc,check,saveResult,shot,out,setRes
     check('从失败弹窗继续任务后显示完成弹窗',hasTaskResult(run));
     tapTaskResult(run);
     writeFileSync(`${out}/resume-result.json`,JSON.stringify({requests,resumed},null,2));
+
+    await open('chat');
+    const longGoal='在本地测试中按顺序做题';
+    let calls=0, supplementSeen=false;
+    setResponder(({messages})=>{
+      calls++;
+      if(calls===1)return {name:'checkpoint',delayMs:8000,args:{goal:'原来的本地答题',completed:'',next:'核对题号',expected:'按顺序'}};
+      if(calls===2) {
+        supplementSeen=JSON.stringify(messages).includes('wait for question 8');
+        return {name:'task_reply',args:{text:'先核对第 8 题。'}};
+      }
+      return {name:'done',delayMs:41_000,args:{summary:'长任务完成',success:true}};
+    });
+    const started=performance.now();
+    const longTask=rpc('run_task',{task:longGoal}).then(result=>({result}),error=>({error}));
+    await delay(900);run('shell','input','tap','780','2180');
+    for(let i=0;i<20&&!windowBounds('dsh-task-panel');i++)await delay(150);
+    await delay(650);
+    const dp=Number(run('shell','wm','density').match(/(\d+)\s*$/)?.[1])/160;
+    for(let i=0;i<4&&!windowBounds('dsh-task-conversation');i++){
+      const panel=panelBounds();
+      shot('task-conversation-panel');
+      run('shell','input','tap',String((panel[0]+panel[2])>>1),String(Math.round(panel[3]-82*dp)));
+      await delay(400);
+    }
+    shot('task-conversation-open');
+    check('任务面板可展开对话窗口',Boolean(windowBounds('dsh-task-conversation')));
+    tapConversation(0.5,95);
+    await delay(600);
+    run('shell','input','text','wait%sfor%squestion%s8');
+    shot('task-conversation-input');
+    tapConversation(0.75,40);
+    for(let i=0;i<65&&(!supplementSeen||!windowBounds('dsh-task-conversation'));i++)await delay(180);
+    shot('task-conversation-reply');
+    // UiAutomator can omit accessibility overlay nodes. Save the reply window for visual review.
+    const replyWindow=Boolean(windowBounds('dsh-task-conversation'));
+    writeFileSync(`${out}/task-conversation.json`,JSON.stringify({calls,supplementSeen,replyWindow}));
+    check('悬浮对话把补充发给同一任务并重新展开答复窗口',supplementSeen&&replyWindow&&calls===2);
+    tapConversation(0.25,40);
+    const {result:finished,error}=await longTask;
+    if(error)throw error;
+    check('答题任务超过 40 秒后仍可完成',!finished.isError&&performance.now()-started>40_000&&calls===3);
+    check('任务结束后悬浮对话关闭',!windowBounds('dsh-task-conversation'));
+    if(hasTaskResult(run))tapTaskResult(run);
   } finally {
     setResponder(null);
     try{await rpc('control_stop')}catch{}

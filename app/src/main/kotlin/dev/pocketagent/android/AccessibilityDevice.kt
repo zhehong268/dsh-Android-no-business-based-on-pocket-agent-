@@ -157,7 +157,7 @@ class AccessibilityDevice(
                     is DeviceAction.Tap -> tap(action.node)
                     is DeviceAction.TapAt -> tapAt(action.x, action.y)
                     is DeviceAction.TypeText -> typeText(action.node, action.text, action.submit, action.mode)
-                    is DeviceAction.Scroll -> scroll(action.direction, action.node)
+                    is DeviceAction.Scroll -> scroll(action.direction, action.node, action.smallStep)
                     DeviceAction.Back -> global(AccessibilityService.GLOBAL_ACTION_BACK, "没能返回")
                     DeviceAction.Home -> global(AccessibilityService.GLOBAL_ACTION_HOME, "没能回到桌面")
                     is DeviceAction.OpenApp -> openApp(action.name)
@@ -269,7 +269,7 @@ class AccessibilityDevice(
         while(reading.handles.size<=1 && reading.screen.root.children.isEmpty() && reading.screen.root.label()==null && !reading.screen.root.editable) {
             val remaining=deadline-android.os.SystemClock.uptimeMillis()
             if(remaining<=0)break
-            delay(minOf(20,remaining))
+            delay(minOf(10,remaining))
             ensureUsable()
             reading=reader.read(observationCounter.getAndIncrement())
         }
@@ -430,7 +430,8 @@ class AccessibilityDevice(
         }
     }
 
-    private suspend fun scroll(direction: Direction, node: ScreenNode?): ActionResult {
+    private suspend fun scroll(direction: Direction, node: ScreenNode?, smallStep: Boolean): ActionResult {
+        val careful = smallStep && direction in setOf(Direction.UP, Direction.DOWN)
         val current = observation ?: return SCREEN_CHANGED
         val target = node ?: largestScrollable(current.screen)
         if (target == null) {
@@ -438,20 +439,20 @@ class AccessibilityDevice(
             // An unknown app ("" package) escaped the block-list check, so it is never acted in.
             if (current.screen.packageName.isEmpty()) return SCREEN_CHANGED
             if (reader.current().packageName != current.screen.packageName) return SCREEN_CHANGED
-            return swipeGesture(planner().swipe(direction, null))
+            return swipeGesture(planner().swipe(direction, null, careful), careful)
         }
         val live = validatedNode(target) ?: return SCREEN_CHANGED
         val scrollAction = scrollActionFor(direction)
-        if (live.actionList.any { it.id == scrollAction.id } && live.performAction(scrollAction.id)) {
+        if (!careful && live.actionList.any { it.id == scrollAction.id } && live.performAction(scrollAction.id)) {
             return ActionResult.Ok
         }
         val bounds = boundsOf(live)
-        val path = planner().swipe(direction, bounds)
+        val path = planner().swipe(direction, bounds, careful)
         // As with taps: a swipe the planner moved out of the node would scroll something else.
         if (!bounds.contains(path.from.x, path.from.y) || !bounds.contains(path.to.x, path.to.y)) {
             return ActionResult.Failed("这里划不动")
         }
-        return swipeGesture(path)
+        return swipeGesture(path, careful)
     }
 
     private fun global(action: Int, failure: String): ActionResult =
@@ -590,12 +591,12 @@ class AccessibilityDevice(
         return gesture(path, TAP_MS)
     }
 
-    private suspend fun swipeGesture(swipe: SwipePath): ActionResult {
+    private suspend fun swipeGesture(swipe: SwipePath, careful: Boolean): ActionResult {
         val path = Path().apply {
             moveTo(swipe.from.x.toFloat(), swipe.from.y.toFloat())
             lineTo(swipe.to.x.toFloat(), swipe.to.y.toFloat())
         }
-        return gesture(path, SWIPE_MS)
+        return gesture(path, if (careful) QUIZ_SWIPE_MS else SWIPE_MS)
     }
 
     /** One stroke, with our overlays hidden until the platform reports the gesture finished or cancelled. */
@@ -795,6 +796,7 @@ class AccessibilityDevice(
         /** Time an app gets to apply typed text before the field is read back. */
         const val TYPE_SETTLE_MS = 150L
         const val SWIPE_MS = 300L
+        const val QUIZ_SWIPE_MS = 650L
         const val MIN_EDGE_DP = 24
         const val MAX_ANCESTORS = 60
         const val SCREENSHOT_LONG_SIDE_PX = 1_280

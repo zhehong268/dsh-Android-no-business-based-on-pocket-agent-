@@ -275,6 +275,7 @@ class AgentLoop(
     private val progress: ProgressStore? = null,
     private val autoVision: Boolean = true,
     private val experiences: ExperienceStore? = null,
+    private val taskConversation: TaskConversation? = null,
 ) {
     private val notificationSerializer = NotificationSerializer()
 
@@ -335,13 +336,15 @@ class AgentLoop(
         data class End(val outcome: TaskOutcome) : Step
     }
 
-    suspend fun run(task: String, initialScreen: Screen): TaskOutcome {
+    suspend fun run(task: String, firstScreen: Screen): TaskOutcome {
+        val initialScreen = if (MessageEffect.isQq(firstScreen.packageName)) device.readUiSource() else firstScreen
         (gate.checkApp(initialScreen) as? Verdict.Block)?.let { return end(EndReason.BLOCKED_APP, it.reason) }
 
         val notificationsOn = notifications?.hasAccess() == true
         val filesOn = files?.hasFolders == true
         val hidden = buildSet {
             add("write_file"); add("quiz_record")
+            if (taskConversation == null) add("task_reply")
             if (voter == null) add("second_opinion")
         }
         val tools = Tools.definitions.filter {
@@ -356,7 +359,11 @@ class AgentLoop(
             append(PHONE_BASICS)
             if (notificationsOn) append(NOTIFICATION_RULES)
             append(EXECUTION_RULES)
-            if (quiz) append(QUIZ_RULES)
+            if (quiz) {
+                append(QUIZ_RULES)
+                append("\n纵向滚动一次只移动小段。每次读完重叠区域，按题号核对是否接上；若题号跳跃，先向上找漏题，再继续。不要用拖拽或连续滚动跳过未核对的题。")
+            }
+            if (taskConversation != null) append("\n用户可从悬浮窗补充本任务，用户补充会作为单独的用户回合出现。需要答复时用 task_reply，再按用户要求继续原任务；不要另起任务。")
             if (voter != null) append(SECOND_OPINION_RULE)
         }
         val run = Run(llm.newSession(prompt, tools), initialScreen, answeringQuiz = quiz)
@@ -407,13 +414,31 @@ class AgentLoop(
         var turn = enrich(run, Turn("任务：$task$recovery\n\n$currentText", systemNote = note), force = true)
         saveProgress(run)
 
-        val limit = if (run.answeringQuiz) maxOf(maxSteps, QUIZ_STEPS) else maxSteps
+        val limit = actionLimit(run)
         repeat(limit) {
+            taskConversation?.awaitClosed()
+            val supplements = taskConversation?.drain().orEmpty()
+            if (supplements.isNotEmpty()) {
+                val fresh = observe(run) ?: return end(EndReason.BLOCKED_APP, "当前应用被拦截。")
+                turn = enrich(run, turn.copy(
+                    text = (if (run.steps == 0) "任务：$task$recovery\n\n" else "") +
+                        fresh.text + "\n\n用户刚补充本任务：" + supplements.joinToString("\n"),
+                    image = null,
+                    systemNote = fresh.note,
+                ), force = true)
+            }
             val sentAt = nowMs()
             val result = run.session.send(turn)
             saveProgress(run)
             run.modelMs += nowMs() - sentAt
             run.steps++
+            taskConversation?.awaitClosed()
+            if (taskConversation?.hasPending() == true && (result is LlmResult.Call || result is LlmResult.NoCall)) {
+                turn = if (result is LlmResult.Call) {
+                    Turn("", ToolResult(result.callId, "用户补充了任务，这个调用未执行。", true))
+                } else Turn("")
+                return@repeat
+            }
             val step = when (result) {
                 is LlmResult.Refused -> return end(EndReason.REFUSED, result.explanation ?: "模型拒绝了这个任务。")
                 is LlmResult.Failed -> return end(if (result.kind == FailureKind.AUTH) EndReason.AUTH_ERROR else EndReason.LLM_ERROR, result.message)
@@ -439,6 +464,12 @@ class AgentLoop(
         val tool = parsed.getOrNull() ?: return invalid(run, call, parsed.exceptionOrNull()?.message ?: "无效的工具调用")
         run.invalidInARow = 0
         return when (tool) {
+            is ToolCall.TaskReply -> {
+                val chat = taskConversation ?: return Step.Next(toolError(call, "当前任务没有对话窗口。"))
+                chat.reply(tool.text)
+                ui.onCaption("有新回复，点「对话」查看")
+                Step.Next(Turn("", ToolResult(call.callId, "答复已显示。继续当前任务。", false)))
+            }
             ToolCall.ReadUiSource -> {
                 val screen=device.readUiSource()
                 run.screen=screen
@@ -518,14 +549,15 @@ class AgentLoop(
             val hits = TextTargets.find(screen, tool.text, container?.id)
             if (hits.size == 1) return act(run, call, ToolCall.Tap(hits.single().id, null, null, tool.irreversible,tool.finishIfVerified))
             if (hits.size > 1) return Step.Next(Turn(serializer.serialize(screen),ToolResult(call.callId,"找到多个匹配项，未点击；请核对后用 node_id：\n"+candidates(hits),true)))
-            if (scrolls >= tool.scrolls) return Step.Next(Turn(serializer.serialize(screen),ToolResult(call.callId,"查找并滚动 $scrolls 次仍未找到「${cleanUntrusted(tool.text,100)}」。请改用搜索或换入口。",true)))
+            if (scrolls >= if (run.answeringQuiz) minOf(tool.scrolls, 1) else tool.scrolls) return Step.Next(Turn(serializer.serialize(screen),ToolResult(call.callId,"查找并滚动 $scrolls 次仍未找到「${cleanUntrusted(tool.text,100)}」。请改用搜索或换入口。",true)))
             val before = ExecutionEvidence.fingerprint(screen)
             val oldContainer = container
             if (run.actions >= actionLimit(run)) return Step.End(end(EndReason.STEP_LIMIT,"已达到本轮手机动作上限。"))
             run.actions++
-            val result = device.perform(DeviceAction.Scroll(tool.direction,container))
+            val result = device.perform(DeviceAction.Scroll(tool.direction,container, smallStep = run.answeringQuiz))
             if (result is ActionResult.Failed) return Step.Next(Turn(serializer.serialize(screen),ToolResult(call.callId,result.reason,true)))
             scrolls++
+            if (run.answeringQuiz) delay(QUIZ_SCROLL_SETTLE_MS)
             observe(run) ?: return Step.End(end(EndReason.BLOCKED_APP,"任务切换到了被拦截的应用。"))
             screen = run.screen
             if (ExecutionEvidence.fingerprint(screen) == before) return Step.Next(Turn(serializer.serialize(screen),ToolResult(call.callId,"列表没有继续滚动，已停止查找。",true)))
@@ -638,6 +670,9 @@ class AgentLoop(
     }
 
     private suspend fun performSteps(run:Run,call:LlmResult.Call,plan:ToolCall.PerformSteps):Step {
+        if (run.answeringQuiz && plan.steps.any { it.action == "scroll" }) {
+            return Step.Next(toolError(call, "答题请单独调用 scroll，每次滚动后先核对题号。"))
+        }
         var completed=0
         var latest:Turn?=null
         suspend fun stopped(reason:String):Step {
@@ -709,10 +744,19 @@ class AgentLoop(
 
     /** A tap, type, scroll, back, home or open_app: resolve it, ask the gate, run it, then look at the screen again. */
     private suspend fun act(run: Run, call: LlmResult.Call, tool: ToolCall,capture:Boolean=true): Step {
+        if (taskConversation?.hasPending() == true) {
+            return Step.Next(toolError(call, "用户刚补充了任务，本步未操作。"))
+        }
+        if (run.answeringQuiz && tool is ToolCall.Drag) {
+            return Step.Next(toolError(call, "答题时请用 scroll 小步滚动，避免跳过题目。"))
+        }
         if(run.needsFreshScreen)return Step.Next(toolError(call,"刚才是字体参照图，先 read_screen 读取实际屏幕，不能按参照图点击或输入。"))
         if (run.actions >= actionLimit(run)) return Step.End(end(EndReason.STEP_LIMIT,"已达到本轮手机动作上限。"))
         val screen = run.screen
-        val resolved = resolve(screen, tool).getOrElse { return Step.Next(toolError(call, it.message ?: "无效的目标")) }
+        val resolution = resolve(screen, tool).getOrElse { return Step.Next(toolError(call, it.message ?: "无效的目标")) }
+        val resolved = if (run.answeringQuiz && resolution.action is DeviceAction.Scroll) {
+            resolution.copy(action = resolution.action.copy(smallStep = true))
+        } else resolution
         if(MessageEffect.isSend(resolved.target) && run.chatRecipient!=null && ChatTargets.title(screen,run.chatRecipient!!)==null)
             return Step.Next(toolError(call,"当前收件人标题与已核对会话不符，不能发送。请重新核对联系人。"))
         if (resolved.target?.enabled == false) return Step.Next(toolError(call,"目标控件尚不可用，请先等页面加载或检查前置条件。"))
@@ -789,11 +833,13 @@ class AgentLoop(
     /** After anything that may have changed the phone: read the screen, check the block list and the stuck detector, report the result. */
     private suspend fun afterAction(run: Run, call: LlmResult.Call, result: ActionResult, countsAsScreenAction: Boolean = true, scrolled: Boolean = false, label: String? = null, before: Screen = run.screen, target: ScreenNode? = null,typed:ToolCall.TypeText?=null,finishVerified:Boolean=false,capture:Boolean=true): Step {
         val checkingMessage = run.pendingMessage != null
-        var next = observe(run) ?: return Step.End(end(EndReason.BLOCKED_APP, "任务切换到了被拦截的应用。"))
-        if(checkingMessage)for(pause in listOf(80L,120L,200L)) {
+        if (run.answeringQuiz && scrolled && result is ActionResult.Ok) delay(QUIZ_SCROLL_SETTLE_MS)
+        val qq = checkingMessage && MessageEffect.isQq(before.packageName)
+        var next = observe(run, expanded = qq) ?: return Step.End(end(EndReason.BLOCKED_APP, "任务切换到了被拦截的应用。"))
+        if(checkingMessage)for(pause in if (qq) listOf(160L, 320L, 600L, 900L) else listOf(80L,120L,200L)) {
             if(run.pendingMessage==null)break
             delay(pause)
-            next=observe(run,quick=true) ?: return Step.End(end(EndReason.BLOCKED_APP,"任务切换到了被拦截的应用。"))
+            next=observe(run,quick=true,expanded=qq) ?: return Step.End(end(EndReason.BLOCKED_APP,"任务切换到了被拦截的应用。"))
         }
         if(!checkingMessage && countsAsScreenAction && result is ActionResult.Ok)for(pause in listOf(60L,80L,120L)) {
             if(ExecutionEvidence.fingerprint(before)!=ExecutionEvidence.fingerprint(run.screen))break
@@ -1143,8 +1189,12 @@ class AgentLoop(
     private class Observation(val text: String, val note: String?, val shown: String = text, val sparse: Boolean = false)
 
     /** Reads the screen, makes it the latest one, and returns its text, or null if the foreground app is blocked. */
-    private suspend fun observe(run: Run,quick:Boolean=false): Observation? {
-        val screen = if(quick)device.readScreenFast() else device.readScreen()
+    private suspend fun observe(run: Run,quick:Boolean=false,expanded:Boolean=false): Observation? {
+        val observation = if(expanded || MessageEffect.isQq(run.screen.packageName)) device.readUiSource()
+            else if(quick) device.readScreenFast() else device.readScreen()
+        val screen = if (!expanded && !MessageEffect.isQq(run.screen.packageName) && MessageEffect.isQq(observation.packageName)) {
+            device.readUiSource()
+        } else observation
         run.screen = screen
         run.needsFreshScreen=false
         if (gate.checkApp(screen) is Verdict.Block) return null
@@ -1188,7 +1238,7 @@ class AgentLoop(
     private fun firstVisitNote(run: Run, packageName: String): String? =
         if (run.seenPackages.add(packageName)) playbooks.forPackage(packageName)?.body else null
 
-    private class Resolved(val action: DeviceAction, val target: ScreenNode?)
+    private data class Resolved(val action: DeviceAction, val target: ScreenNode?)
 
     /** Node ids are looked up on the latest screen only, so an id from an earlier observation can never hit a different node. */
     private fun resolve(screen: Screen, tool: ToolCall): Result<Resolved> {
@@ -1312,9 +1362,10 @@ class AgentLoop(
     private fun looksLikeQuiz(task: String): Boolean = QuizLabels.looksLikeQuiz(task)
 
     private companion object {
-        const val MAX_STEPS_LIMIT = 60
+        const val MAX_STEPS_LIMIT = 160
         /** A paper with one question per screen costs several steps per question, so answering gets a longer budget. */
-        const val QUIZ_STEPS = 90
+        const val QUIZ_STEPS = 360
+        const val QUIZ_SCROLL_SETTLE_MS = 250L
         const val MAX_DETAIL = 200
         const val MAX_TARGET = 60
         const val STUCK_LIMIT = 3

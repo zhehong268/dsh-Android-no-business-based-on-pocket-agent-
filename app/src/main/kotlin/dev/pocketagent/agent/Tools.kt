@@ -12,6 +12,7 @@ import kotlinx.serialization.json.putJsonObject
 
 /** One validated action chosen by the model. */
 sealed interface ToolCall {
+    data class TaskReply(val text: String) : ToolCall
     data class Tap(val nodeId: String?, val x: Int?, val y: Int?, val irreversible: Boolean, val finishIfVerified:Boolean=false) : ToolCall
 
     /** Finds text on screen, scrolling down when it is not visible yet, then taps it. */
@@ -147,6 +148,8 @@ object Tools {
         Field("node_id", Kind.STRING, description, required, min = 1, max = 20)
 
     private val specs: List<Spec> = listOf(
+        Spec("task_reply", "在当前手机任务的对话窗口回答用户。回答后继续当前任务。",
+            listOf(Field("text", Kind.STRING, "面向用户的答复", min = 1, max = 1500))) { a -> ToolCall.TaskReply(a["text"] as String) },
         Spec("read_ui_source","读取当前界面运行控件的原始 Unicode 文本、类名、资源 ID 和边界。花字体优先读原文；这是运行时控件结构，不是反编译源码，不读取私有数据库。",emptyList()) { ToolCall.ReadUiSource },
         Spec("find_chat_input","综合正文语义、发送按钮、下部位置和焦点找聊天输入框，区分顶部搜索栏。看不见聊天框时优先使用；候选接近时不会擅选。",emptyList()) { ToolCall.FindChatInput },
         Spec("font_reference","读取字体信息，实际加载系统默认字体及可访问的当前应用内字体渲染参照。原文可读时按原文匹配；参照图不是屏幕。",listOf(Field("text",Kind.STRING,"需要识别的姓名或文字，最多 26 字。",min=1,max=26))) { ToolCall.FontReference(it["text"] as String) },

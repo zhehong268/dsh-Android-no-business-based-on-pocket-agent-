@@ -23,18 +23,24 @@ internal class MessageEffect private constructor(val receipt:PendingMessageRecei
     fun verified(screen:Screen):Boolean {
         val r=receipt
         if(screen.packageName!=r.packageName || errors(screen)>r.beforeErrors || pending(screen)>r.beforePending)return false
+        if(isQq(screen.packageName) && r.conversationHash==null)return false
         if(r.conversationHash!=null && titleHash(screen)!=r.conversationHash)return false
         if(messages(screen,r.bodyHash,r.bodyLength)<=r.beforeMessages)return false
         val fields=screen.all().filter { it.editable && !it.isPassword && !isSearch(it) }.toList()
         val byId=r.inputId?.let { id->fields.filter { it.viewId==id }.singleOrNull() }
         val sameBounds=fields.filter { bounds(it)==r.inputBounds }.singleOrNull()
         val input=byId ?: sameBounds ?: ChatTargets.composer(screen) ?: fields.singleOrNull()
-        if(input!=null)return input.text.isNullOrBlank()
+        if(input!=null)return input.text.isNullOrBlank() || (isQq(screen.packageName) && input.text==input.hint)
         // Some chat apps replace/hide the editor after sending. Require the same readable conversation.
         return fields.isEmpty() && r.conversationHash!=null && titleHash(screen)==r.conversationHash
     }
 
     companion object {
+        fun isQq(packageName: String) = packageName in setOf("com.tencent.mobileqq", "com.tencent.tim")
+
+        private val QQ_SELF = Regex("^(?:我|本人|我发送的消息|我发送的文本消息|你发送了|You sent)[：:,，]\\s*", RegexOption.IGNORE_CASE)
+        private val QQ_TIME = Regex("(?:[，,。]\\s*|\\s+)(?:(?:今天|昨天|上午|下午)\\s*)?\\d{1,2}:\\d{2}$")
+        private val QQ_STATUS = Regex("(?:[，,。]\\s*|\\s+)(?:已发送|已送达|已读)$")
         private val FAILURE=Regex("发送失败|未发送|重新发送|not sent|failed to send",RegexOption.IGNORE_CASE)
         private val PENDING=Regex("发送中|正在发送|待发送|sending|pending",RegexOption.IGNORE_CASE)
         private val STATUS=Regex("\\s+(已发送|已送达|已读|sent|delivered|read)$",RegexOption.IGNORE_CASE)
@@ -95,8 +101,24 @@ internal class MessageEffect private constructor(val receipt:PendingMessageRecei
             return false
         }
         private fun messages(screen:Screen,digest:String,length:Int):Int {
-            val matched=screen.all().filter { n->!n.editable && !n.isPassword &&
-                (matches(n.text,digest,length) || matches(n.description,digest,length,true) || splitMessage(n,digest,length)) }.toList()
+            fun hasEditor(n: ScreenNode): Boolean = n.editable || n.isPassword || n.children.any(::hasEditor)
+            val qq = isQq(screen.packageName)
+            val root = screen.root.bounds
+            val midpoint = root.left + (root.right - root.left) / 2
+            val matched=screen.all().filter { n->!n.editable && !n.isPassword && (!qq || !hasEditor(n)) }.filter { n ->
+                val plain = matches(n.text,digest,length) || matches(n.description,digest,length,!qq) || splitMessage(n,digest,length)
+                if (!qq) return@filter plain
+                val desc = n.description.orEmpty()
+                val own = QQ_SELF.containsMatchIn(desc)
+                val bare = QQ_SELF.replace(desc, "")
+                val withoutStatus = QQ_STATUS.replace(bare, "")
+                val withoutTime = QQ_TIME.replace(withoutStatus, "")
+                val ownMatches = own && listOf(bare, withoutStatus, withoutTime, QQ_STATUS.replace(withoutTime, ""))
+                    .any { matches(it,digest,length) }
+                val rightBubble = n.bounds.left >= midpoint && n.bounds.top >= root.top + (root.bottom - root.top) / 6 &&
+                    desc.indexOfAny(charArrayOf('：', ':')) < 0
+                ownMatches || (rightBubble && plain)
+            }.toList()
             fun contains(parent:ScreenNode,id:String):Boolean=parent.children.any { it.id==id || contains(it,id) }
             return matched.count { n->matched.none { it.id!=n.id && contains(n,it.id) } }
         }

@@ -96,4 +96,16 @@ class MessageEffectTest {
         assertTrue(MessageEffect.restore(store.load()!!.messageReceipt!!).verified(after(node("bubble",text=body))))
         assertFalse(original.receipt.toString().contains(body))
     }
+
+    @Test fun qqAcceptsNewOwnDescribedBubbleAndClearedComposer() {
+        val title = node("title", text = "张小明", bounds = Bounds(20, 60, 600, 140))
+        val initial = before(title).copy(packageName = "com.tencent.mobileqq")
+        val receipt = effect(initial)
+        val bubble = node("qq", description = "我发送的消息，$body，12:30，已发送", bounds = Bounds(300, 550, 950, 650))
+        assertTrue(receipt.verified(after(title, bubble).copy(packageName = initial.packageName)))
+        assertFalse(receipt.verified(after(title, bubble.copy(description = "张小明，$body，12:30")).copy(packageName = initial.packageName)))
+        assertFalse(receipt.verified(after(title, bubble, node("pending", description = "发送中")).copy(packageName = initial.packageName)))
+        assertFalse(effect(before(title, bubble).copy(packageName = initial.packageName))
+            .verified(after(title, bubble.copy(id = "old")).copy(packageName = initial.packageName)))
+    }
 }
