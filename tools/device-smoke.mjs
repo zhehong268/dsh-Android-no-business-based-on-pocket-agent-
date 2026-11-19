@@ -5,6 +5,7 @@ import {mkdirSync,writeFileSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {lockPhone} from './phone-test-lock.mjs';
+import {hasTaskResult,tapTaskResult} from './result-popup.mjs';
 const adb=process.env.ADB || 'adb';
 const serial=process.env.DSH_TEST_SERIAL || 'emulator-5556';
 if(!serial.startsWith('emulator-'))throw Error('仅允许在隔离模拟器运行此回归脚本');
@@ -15,7 +16,7 @@ function run(...args){const r=spawnSync(adb,['-s',serial,...args],{encoding:'utf
 function prefsWrite(xml,file='pocketagent_setup'){assert.ok(['pocketagent_setup','dsh_progress','dsh_chat'].includes(file));run('shell','run-as','dev.pocketagent','rm','-f',`shared_prefs/${file}.xml.bak`);const r=spawnSync(adb,['-s',serial,'shell','run-as','dev.pocketagent','sh','-c',`'cat > shared_prefs/${file}.xml'`],{input:xml,encoding:'utf8',timeout:10000});if(r.status!==0)throw Error('cannot write test preferences');}
 function shot(name){const r=spawnSync(adb,['-s',serial,'exec-out','screencap','-p'],{timeout:10000});if(r.status!==0)throw Error('screenshot failed');writeFileSync(`${out}/${name}.png`,r.stdout);}
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
-let original,progressBefore,chatBefore,enabled,proxy,token=randomBytes(24).toString('hex'),counter=0,server,modelRequests=0,failModel=false,modelResponder=null;
+let original,progressBefore,chatBefore,enabled,proxy,nightMode,token=randomBytes(24).toString('hex'),counter=0,server,modelRequests=0,failModel=false,modelResponder=null;
 const checks=[],events=[],timings=[];
 async function rpc(name,args={}){const started=performance.now();const r=await fetch('http://127.0.0.1:18765/mcp',{method:'POST',headers:{'content-type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({jsonrpc:'2.0',id:++counter,method:'tools/call',params:{name,arguments:args}}),signal:AbortSignal.timeout(140000)});assert.equal(r.status,200,`${name} HTTP ${r.status}`);const data=await r.json();if(data.error)throw Error(`${name}: ${JSON.stringify(data.error)}`);timings.push({name,ms:Math.round(performance.now()-started),interactive:name==='control_start'||name==='run_task'||(name==='tap_text'&&args.text==='发送')});return data.result;}
 function text(result){return result.content.filter(x=>x.type==='text').map(x=>x.text).join('\n');}
@@ -27,6 +28,9 @@ try{
   let booted=false;
   for(let attempt=0;attempt<100;attempt++){if(run('shell','getprop','sys.boot_completed').trim()==='1'){booted=true;break;}await delay(500);}
   assert.ok(booted,'模拟器启动超时，尚未进入可安装应用的状态');
+  nightMode=run('shell','cmd','uimode','night').match(/Night mode: (yes|no|auto|custom_schedule|custom_bedtime)\b/)?.[1];
+  assert.ok(nightMode,'无法记录模拟器原有配色');
+  run('shell','cmd','uimode','night','no');
   run('install','-r',process.env.DSH_TEST_APK || fileURLToPath(new URL('../app/build/outputs/apk/debug/app-debug.apk',import.meta.url)));
   await delay(1800); // Let package replacement finish before changing accessibility settings.
   enabled=run('shell','settings','get','secure','enabled_accessibility_services').trim();
@@ -43,7 +47,7 @@ try{
   proxy=run('shell','settings','get','global','http_proxy').trim();
   run('shell','settings','put','global','http_proxy',':0');run('shell','settings','delete','global','http_proxy');
   run('shell','am','force-stop','dev.pocketagent');
-  const xml=original.replace(/<boolean name="settings\.computerLink"[^>]*\/>/g,'').replace(/<string name="settings\.linkToken">[^<]*<\/string>/g,'').replace('</map>',`<boolean name="settings.computerLink" value="true" /><string name="settings.linkToken">${token}</string></map>`);
+  const xml=original.replace(/<boolean name="settings\.computerLink"[^>]*\/>/g,'').replace(/<string name="settings\.linkToken">[^<]*<\/string>/g,'').replace(/<string name="settings\.theme">[^<]*<\/string>/g,'').replace('</map>',`<boolean name="settings.computerLink" value="true" /><string name="settings.linkToken">${token}</string></map>`);
   // A credential-free local model fixture; the original configuration stays only in memory.
   const configured=xml.replace(/<(string|boolean|int) name="config\.[^"]+"[^>]*>(?:[^<]*)<\/\1>/g,'').replace(/<(?:string|boolean|int) name="config\.[^"]+"[^>]*\/>/g,'').replace('</map>',
     '<boolean name="settings.notice" value="true"/><string name="config.kind">OPENAI_COMPAT</string><string name="config.baseUrl">http://127.0.0.1:18100/v1</string><string name="config.model">local-fixture</string><string name="config.images">true</string><string name="config.contextTokens">128000</string><string name="config.maxOutputTokens">4096</string></map>');
@@ -200,6 +204,7 @@ try{
   await delay(800);
   check('面板停止按钮取消正在运行的任务', (await rpc('read_screen')).isError);
   check('停止后任务面板完全移除',!run('shell','dumpsys','window','windows').includes('dsh-task-panel'));
+  check('手动停止后显示结果弹窗',hasTaskResult(run));
   const stopped=await rpc('control_stop');check('电脑控制可停止',!stopped.isError);
   const forbidden=await rpc('read_screen');check('停止后不能继续读屏',forbidden.isError);
   shot('09-finished');
@@ -211,12 +216,28 @@ try{
   check('本地模型任务可正常完成',!completed.isError&&text(completed).includes('本地生命周期检查完成'));
   await delay(500);
   check('正常完成后面板自动移除',!run('shell','dumpsys','window','windows').includes('dsh-task-panel'));
+  check('正常完成后显示结果弹窗',hasTaskResult(run));
+  shot('13-success-popup-light');
+  await delay(15_500);
+  check('结果弹窗不会在旧的 15 秒后消失',hasTaskResult(run));
+  run('shell','cmd','uimode','night','yes');
+  await delay(1100);
+  check('切到系统深色模式后原结果弹窗仍可见',hasTaskResult(run));
+  shot('13-success-popup-dark');
+  tapTaskResult(run);
+  await delay(250);
+  check('点知道了关闭结果弹窗',!hasTaskResult(run));
   failModel=true;
   const failedPending=rpc('run_task',{task:'运行本地模型错误清理检查'});
   await delay(700);if(process.env.DSH_SMOKE_APPROVE==='1')run('shell','input','tap','780','2180');
   const failed=await failedPending;check('模型错误有失败结果',failed.isError);
   await delay(500);check('模型错误后面板自动移除',!run('shell','dumpsys','window','windows').includes('dsh-task-panel'));
-  shot('14-idle');
+  check('模型错误后显示结果弹窗',hasTaskResult(run));
+  shot('14-failure-popup-dark');
+  tapTaskResult(run,'close');
+  await delay(250);
+  check('关闭失败弹窗不会自动重试',!hasTaskResult(run)&&!run('shell','dumpsys','window','windows').includes('dsh-task-panel'));
+  run('shell','cmd','uimode','night','no');
   }
   if(process.env.DSH_NATIVE_FIXTURE==='1') {
     const {nativeChatCases}=await import('./native-chat-cases.mjs');
@@ -247,6 +268,7 @@ finally{
   if(proxy!==undefined){if(proxy&&proxy!=='null')run('shell','settings','put','global','http_proxy',proxy);else {run('shell','settings','put','global','http_proxy',':0');run('shell','settings','delete','global','http_proxy');}}
   try{run('forward','--remove','tcp:18765');}catch{}
   try{run('reverse','--remove','tcp:18100');}catch{}
+  if(nightMode!==undefined)run('shell','cmd','uimode','night',nightMode);
   server?.close();
   server?.closeAllConnections();
   writeFileSync(`${out}/results.json`,JSON.stringify({checks,events,timings},null,2),'utf8');

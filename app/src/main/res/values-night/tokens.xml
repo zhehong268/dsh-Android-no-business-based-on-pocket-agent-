@@ -7,7 +7,7 @@
     <color name="pa_muted">#FF98989F</color>
     <color name="pa_blue">#FF8FB0FF</color>
     <color name="pa_on_blue">#FF000000</color>
-    <color name="pa_accent">#FFFF8544</color>
+    <color name="pa_accent">#FF91B3FF</color>
     <color name="pa_on_accent">#FF111A33</color>
     <color name="pa_good">#FF30D158</color>
     <color name="pa_bad">#FFFF453A</color>
@@ -22,7 +22,6 @@
     <color name="pa_hero_fill">#2EFFFFFF</color>
     <color name="pa_t_blue">#FF3D7BFF</color>
     <color name="pa_t_green">#FF30D158</color>
-    <color name="pa_t_orange">#FFFF9F0A</color>
     <color name="pa_t_indigo">#FF6E6CF0</color>
     <color name="pa_t_red">#FFFF453A</color>
     <color name="pa_t_gray">#FF636366</color>

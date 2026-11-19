@@ -5,12 +5,11 @@
     <color name="brand_border">#FF1E2333</color>
     <color name="brand_blue">#FF1E6FFF</color>
     <color name="brand_blue_subdued">#FF1A2B4C</color>
-    <color name="brand_orange">#FFFF8544</color>
     <color name="brand_text">#FFF8F9FC</color>
     <color name="brand_muted">#FF8E95A5</color>
     <color name="bubble_idle">#FF757575</color>
     <color name="bubble_running">@color/brand_blue</color>
-    <color name="bubble_waiting">#FFF2A100</color>
+    <color name="bubble_waiting">#FF91B3FF</color>
     <color name="bubble_done">#FF2E9E4F</color>
     <color name="bubble_error">#FFD83A3A</color>
     <color name="card_background">@color/brand_surface</color>

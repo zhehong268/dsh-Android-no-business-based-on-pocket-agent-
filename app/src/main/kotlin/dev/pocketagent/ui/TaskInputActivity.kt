@@ -209,7 +209,7 @@ class TaskInputActivity : ThemedActivity() {
             // One icon and hue per tile, in QuickTasks.all order: Catch me up, Reply to this, Take me to an address,
             // What's this?, Latest OTP, Record my routine.
             val icons = listOf(R.drawable.ic_chat, R.drawable.ic_send, R.drawable.ic_pin, R.drawable.ic_search, R.drawable.ic_key, R.drawable.ic_doc)
-            val hues = listOf(R.color.pa_t_green, R.color.pa_t_indigo, R.color.pa_t_blue, R.color.pa_t_orange, R.color.pa_t_gray, R.color.pa_t_indigo)
+            val hues = listOf(R.color.pa_t_green, R.color.pa_t_indigo, R.color.pa_t_blue, R.color.pa_t_blue, R.color.pa_t_gray, R.color.pa_t_indigo)
             QuickTasks.all.forEachIndexed { index, quick ->
                 // Defensive only: a tile added without an icon gets a plain chat icon rather than another tile's.
                 val icon = icons.getOrElse(index) { R.drawable.ic_chat }
@@ -303,7 +303,7 @@ class TaskInputActivity : ThemedActivity() {
         }
         composer.addView(send)
 
-        // The send button wakes (grey to orange, with a pop) once there is something to send; suggestions tuck away.
+        // The send button wakes once there is something to send; suggestions tuck away.
         var armed = false
         val counter = Kit.text(c, "", 12f, 400, R.color.pa_muted).apply { gravity = Gravity.END; visibility = View.GONE }
         input.addTextChangedListener(object : android.text.TextWatcher {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {writeFileSync} from 'node:fs';
+import {hasTaskResult,tapTaskResult} from './result-popup.mjs';
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const text=r=>r.content.filter(c=>c.type==='text').map(c=>c.text).join('\n');
 
@@ -60,16 +61,24 @@ export async function resumeSpeedCases({run,rpc,check,saveResult,shot,out,setRes
     });
     const failing=rpc('run_task',{task:goal});await delay(900);run('shell','input','tap','780','2180');
     const failed=saveResult('speed-model-failure',await failing);check('模拟模型故障保留未完成任务',failed.isError);
-    allowResume=true;
+    await delay(450);
+    check('继续任务前失败弹窗可见',hasTaskResult(run));
+    tapTaskResult(run,'close');
     run('shell','am','start','-n','dev.pocketagent/.ui.MainActivity');await delay(600);
     tap('记录');await delay(300);tap(goal);await delay(300);
     const labels=nodes().map(n=>n.text);
     check('失败记录提供继续任务入口',labels.includes('继续任务')&&!labels.includes('重新运行'));
     tap('继续任务');
+    for(let i=0;i<20&&!hasTaskResult(run);i++)await delay(200);
+    check('从记录继续后再次失败仍显示结果弹窗',hasTaskResult(run)&&requests>=3);
+    allowResume=true;
+    tapTaskResult(run,'continue');
     for(let i=0;i<30&&!resumed;i++)await delay(200);
     check('继续任务恢复原目标和进度并回到原应用',resumed?.originalGoal&&resumed?.savedProgress&&resumed?.originalApp);
-    await delay(400);check('恢复任务完成后面板消失',!run('shell','dumpsys','window','windows').includes('dsh-task-panel'));
+    await delay(550);check('恢复任务完成后面板消失',!run('shell','dumpsys','window','windows').includes('dsh-task-panel'));
     shot('speed-resumed');
+    check('从失败弹窗继续任务后显示完成弹窗',hasTaskResult(run));
+    tapTaskResult(run);
     writeFileSync(`${out}/resume-result.json`,JSON.stringify({requests,resumed},null,2));
   } finally {
     setResponder(null);

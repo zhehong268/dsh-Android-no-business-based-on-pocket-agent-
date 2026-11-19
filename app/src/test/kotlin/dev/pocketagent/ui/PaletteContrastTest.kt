@@ -9,34 +9,43 @@ import kotlin.test.assertTrue
 import org.w3c.dom.Element
 
 class PaletteContrastTest {
-    private val raw: Map<String, String> by lazy {
+    private val raw by lazy { parse("values/colors.xml") }
+
+    private fun parse(file: String): Map<String, String> {
         val factory = DocumentBuilderFactory.newInstance()
         factory.isNamespaceAware = false
-        val root = factory.newDocumentBuilder().parse(File("src/main/res/values/colors.xml")).documentElement
+        val root = factory.newDocumentBuilder().parse(File("src/main/res/$file")).documentElement
         val nodes = root.getElementsByTagName("color")
-        (0 until nodes.length).map { nodes.item(it) as Element }.associate { it.getAttribute("name") to it.textContent.trim() }
+        return (0 until nodes.length).map { nodes.item(it) as Element }.associate { it.getAttribute("name") to it.textContent.trim() }
     }
 
     /** Resolves `@color/other` references; returns #AARRGGBB text. */
-    private fun value(name: String): String {
-        var v = raw[name] ?: error("missing colour $name")
-        while (v.startsWith("@color/")) v = raw[v.removePrefix("@color/")] ?: error("missing colour $v")
+    private fun value(name: String, palette: Map<String, String> = raw): String {
+        var v = palette[name] ?: error("missing colour $name")
+        while (v.startsWith("@color/")) v = palette[v.removePrefix("@color/")] ?: error("missing colour $v")
         return v.uppercase()
     }
 
-    private fun luminance(name: String): Double {
-        val rgb = value(name).removePrefix("#").takeLast(6).chunked(2).map { it.toInt(16) / 255.0 }
+    private fun luminance(hex: String): Double {
+        val rgb = hex.removePrefix("#").takeLast(6).chunked(2).map { it.toInt(16) / 255.0 }
         val (r, g, b) = rgb.map { if (it <= 0.03928) it / 12.92 else ((it + 0.055) / 1.055).pow(2.4) }
         return 0.2126 * r + 0.7152 * g + 0.0722 * b
     }
 
-    private fun contrast(a: String, b: String): Double {
-        val (hi, lo) = listOf(luminance(a), luminance(b)).sortedDescending()
+    private fun contrast(a: String, b: String, palette: Map<String, String> = raw): Double {
+        val (hi, lo) = listOf(luminance(value(a, palette)), luminance(value(b, palette))).sortedDescending()
         return (hi + 0.05) / (lo + 0.05)
     }
 
     @Test
-    fun darkTextOnOrangeIsAtLeast7() = assertTrue(contrast("brand_background", "brand_orange") >= 7.0)
+    fun popupTextAndPrimaryActionHaveReadableContrastInBothThemes() {
+        for (folder in listOf("values", "values-night")) {
+            val palette = parse("$folder/tokens.xml")
+            assertTrue(contrast("pa_ink", "pa_card", palette) >= 7.0, "$folder result text")
+            assertTrue(contrast("pa_muted", "pa_card", palette) >= 4.5, "$folder result heading")
+            assertTrue(contrast("pa_on_accent", "pa_accent", palette) >= 4.5, "$folder button text")
+        }
+    }
 
     @Test
     fun textOnBackgroundIsAtLeast7() = assertTrue(contrast("brand_text", "brand_background") >= 7.0)
@@ -61,9 +70,10 @@ class PaletteContrastTest {
     fun bubbleRunningIsTheBrandBlue() = assertEquals(value("brand_blue"), value("bubble_running"))
 
     @Test
-    fun bubbleStateColoursOtherThanRunningAreUnchanged() {
+    fun bubbleWaitingIsDistinctFromRunningAndOtherStatesRemainUnchanged() {
         assertEquals("#FF757575", value("bubble_idle"))
-        assertEquals("#FFF2A100", value("bubble_waiting"))
+        assertEquals("#FF91B3FF", value("bubble_waiting"))
+        assertTrue(value("bubble_waiting") != value("bubble_running"))
         assertEquals("#FF2E9E4F", value("bubble_done"))
         assertEquals("#FFD83A3A", value("bubble_error"))
     }
@@ -76,7 +86,6 @@ class PaletteContrastTest {
             "brand_border" to "#FF1E2333",
             "brand_blue" to "#FF1E6FFF",
             "brand_blue_subdued" to "#FF1A2B4C",
-            "brand_orange" to "#FFFF8544",
             "brand_text" to "#FFF8F9FC",
             "brand_muted" to "#FF8E95A5",
         )

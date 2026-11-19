@@ -320,6 +320,7 @@ class AgentSession(
     private fun begin(task: String, screen: Screen, client: LlmClient, fromSetup: Boolean, spoken: Boolean = false) {
         // Every start runs on the main thread and the runner refuses a second task, so a live task keeps its UI.
         if (taskIsLive() || recorder != null) return
+        summaryCard.close()
         val quiz = QuizLabels.looksLikeQuiz(task)
         val stored = repository.load()?.let { ModelCapabilities.operator(it).model.lowercase() }.orEmpty()
         pendingClient = client
@@ -382,6 +383,7 @@ class AgentSession(
         if(progress.load(task)!=null) { resumeTask(task);return }
         if (closed || remoteInFlight || task.isEmpty() || task.length > TaskInputActivity.MAX_TEXT || taskIsLive()) return
         val client = currentClient() ?: return
+        summaryCard.close()
         scope.launch {
             val screen = try {
                 // A resumed task must keep the user's current app; a fresh task starts at Home.
@@ -403,7 +405,10 @@ class AgentSession(
     override fun resumeTask(text:String,previousSummary:String) {
         val task=text.trim()
         if(closed || remoteInFlight || taskIsLive() || tapJob?.isActive==true || task.isBlank())return
-        val client=currentClient() ?: return
+        val client=currentClient() ?: run {
+            Toast.makeText(service, "请先在设置中配置模型，再继续任务。", Toast.LENGTH_LONG).show()
+            return
+        }
         val saved=progress.load(task) ?: dev.pocketagent.agent.TaskProgress(task,
             next="核对上次结果后完成剩余任务，不从头重复操作。",trail=previousSummary.take(2_000),uncertainAction=true,
             pendingMessage=Regex("发送.*(不明|未核验|未确认)|可能已发送").containsMatchIn(previousSummary))
@@ -485,17 +490,28 @@ class AgentSession(
         service.subscribeToTaskEvents(live)
         when (state) {
             is AgentState.Finished -> {
+                val outcome = state.outcome
+                val task = taskText
+                val canContinue = !outcome.success && directControl == null && task.isNotBlank()
+                val savedSummary = SummaryText.forHistory(outcome)
                 directControl?.close(state.outcome.summary); directControl = null
                 if (remoteInFlight) remoteInFlight = false
                 if (setupTaskRunning && state.outcome.success) repository.testTaskDone = true
-                record(state.outcome.success, SummaryText.forHistory(state.outcome), state.outcome.usage.inputTokens + state.outcome.usage.outputTokens)
+                record(outcome.success, savedSummary, outcome.usage.inputTokens + outcome.usage.outputTokens)
                 setupTaskRunning = false
                 // Not stopped afterwards, so the result is heard in full; the next task, a cancel or close() stops it.
                 if (!taskIsLive()) {
                     voiceUi?.end(state.outcome)
                     activeUi = overlayUi
                 }
-                endTask(SummaryText.title(state), SummaryText.body(state.outcome))
+                val reason = SummaryText.title(state)
+                val title = when {
+                    outcome.success -> "任务完成"
+                    reason == "未完成" -> "任务未完成"
+                    else -> "任务失败 · $reason"
+                }
+                val body = SummaryText.body(outcome).ifBlank { if (outcome.success) "操作已结束。" else "未返回详细原因。" }
+                endTask(title, body, if (canContinue) ({ resumeTask(task, savedSummary) }) else null)
             }
             AgentState.Stopped -> {
                 directControl?.close("用户在手机上停止了控制。"); directControl = null
@@ -503,7 +519,7 @@ class AgentSession(
                 setupTaskRunning = false
                 record(false, "被你停止；进度已保留，可从首页继续。", 0)
                 if (!taskIsLive()) stopVoice()
-                endTask(SummaryText.stoppedTitle(), "")
+                endTask(SummaryText.stoppedTitle(), "可在任务记录里查看本次任务。")
             }
             else -> Unit
         }
@@ -519,13 +535,12 @@ class AgentSession(
     }
 
     /** Runs once per ending; skipped when a newer task already started before this state was collected. */
-    private fun endTask(title: String, body: String) {
+    private fun endTask(title: String, body: String, onContinue: (() -> Unit)? = null) {
         if (taskIsLive()) return
         overlayUi.closeAll()
         TaskInputActivity.closeAnswerScreen()
         device.dropHandles()
-        summaryCard.close()
-        Toast.makeText(service, title + "。" + withSpeechNote(body).take(120), Toast.LENGTH_LONG).show()
+        summaryCard.showResult(title, withSpeechNote(body), onContinue)
     }
 
     private fun stopRunningTask() {

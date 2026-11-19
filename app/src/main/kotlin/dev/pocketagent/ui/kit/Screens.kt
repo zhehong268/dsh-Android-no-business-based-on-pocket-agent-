@@ -242,7 +242,7 @@ object Screens {
 
         add(Kit.secondary(c,"聊天答疑",50,state.onChat),Kit.lp().apply { bottomMargin=dp(c,14) })
 
-        // composer: the hero. The send button wakes up (grey to orange, with a pop) once there is something to send.
+        // The send button wakes once there is something to send.
         val composer = Kit.vstack(c).apply {
             background = Kit.rounded(color(c, R.color.pa_card), dpf(c, 28))
             setPadding(dp(c, 18), dp(c, 16), dp(c, 12), dp(c, 12))
@@ -554,7 +554,7 @@ object Screens {
             p.addView(Kit.group(c, names.map { n -> Kit.row(c, n, leading = colorTile(c, icon, hue), minHeight = 52) }, 60), Kit.lp())
         }
         block("银行与支付", R.drawable.ic_lock, R.color.pa_t_red, "Google Pay", "PhonePe", "Paytm", "BHIM 及其他 UPI 应用", "任何银行或钱包应用")
-        block("密码与登录验证码", R.drawable.ic_key, R.color.pa_t_orange, "Bitwarden", "1Password", "LastPass", "Google Authenticator")
+        block("密码与登录验证码", R.drawable.ic_key, R.color.pa_t_blue, "Bitwarden", "1Password", "LastPass", "Google Authenticator")
         block("手机控制", R.drawable.ic_settings, R.color.pa_t_gray, "设置", "系统控制与权限页面", "应用安装器")
         p.addView(Kit.footnote(c, "它还会跳过名称里含 bank、pay、wallet、UPI 或 password 的应用。"))
         return plain(c, p)
@@ -603,7 +603,7 @@ object Screens {
         p.addView(Kit.section(c, "AI"))
         p.addView(settingsGroup(c,
             Kit.row(c, "服务商与模型", leading = colorTile(c, R.drawable.ic_globe, R.color.pa_t_blue), trailing = Kit.value(c, state.provider), onClick = state.onProvider),
-            Kit.row(c, "API 密钥", leading = colorTile(c, R.drawable.ic_key, R.color.pa_t_orange), trailing = Kit.value(c, if (state.keySaved) "已保存" else "未设置"), onClick = state.onProvider),
+            Kit.row(c, "API 密钥", leading = colorTile(c, R.drawable.ic_key, R.color.pa_t_blue), trailing = Kit.value(c, if (state.keySaved) "已保存" else "未设置"), onClick = state.onProvider),
         ), Kit.lp())
         p.addView(gap(c, 26))
 
