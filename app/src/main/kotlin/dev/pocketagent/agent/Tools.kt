@@ -26,7 +26,8 @@ sealed interface ToolCall {
     data class PerformSteps(val steps:List<SequenceStep>,val finishIfVerified:Boolean=false,val summary:String?=null) : ToolCall
     data object ReadUiSource : ToolCall
     data object FindChatInput : ToolCall
-    data class FontReference(val text:String) : ToolCall
+    data class FontReference(val text: String, val nodeId: String? = null) : ToolCall
+    data class CheckAppearance(val includeVisibleColors: Boolean = true) : ToolCall
     data class OpenContact(val name:String,val hint:String="") : ToolCall
     data class FillChat(
         val recipient: String,
@@ -152,7 +153,13 @@ object Tools {
             listOf(Field("text", Kind.STRING, "面向用户的答复", min = 1, max = 1500))) { a -> ToolCall.TaskReply(a["text"] as String) },
         Spec("read_ui_source","读取当前界面运行控件的原始 Unicode 文本、类名、资源 ID 和边界。花字体优先读原文；这是运行时控件结构，不是反编译源码，不读取私有数据库。",emptyList()) { ToolCall.ReadUiSource },
         Spec("find_chat_input","综合正文语义、发送按钮、下部位置和焦点找聊天输入框，区分顶部搜索栏。看不见聊天框时优先使用；候选接近时不会擅选。",emptyList()) { ToolCall.FindChatInput },
-        Spec("font_reference","读取字体信息，实际加载系统默认字体及可访问的当前应用内字体渲染参照。原文可读时按原文匹配；参照图不是屏幕。",listOf(Field("text",Kind.STRING,"需要识别的姓名或文字，最多 26 字。",min=1,max=26))) { ToolCall.FontReference(it["text"] as String) },
+        Spec("font_reference", "生成字体参照。可用最新的非输入节点编号核对其公开字族。优先按原文匹配；参照图不是实际屏幕。", listOf(
+            Field("text",Kind.STRING,"需要识别的姓名或文字，最多 26 字。",min=1,max=26),
+            nodeId("待核对的最新文字节点，可省略。", false),
+        )) { ToolCall.FontReference(it["text"] as String, it["node_id"] as String?) },
+        Spec("check_appearance", "核对字体线索、当前可见键盘及桌面、锁屏和应用背景配色。只读，不切应用、不打开键盘；不返回壁纸或皮肤文件。", listOf(
+            Field("include_visible_colors", Kind.BOOLEAN, "是否采样当前画面的键盘和背景配色，默认 true；false 仅取公开配置与控件线索。", required = false),
+        )) { ToolCall.CheckAppearance(it["include_visible_colors"] as Boolean? ?: true) },
         Spec("open_contact","按完整联系人或群名导航并核验会话，优先通讯录和应用内搜索，每步读取最新控件原文。重名返回候选，hint 可补充用户提供的备注；不发送消息。",listOf(
             Field("name",Kind.STRING,"用户指定的完整姓名、备注或群名。",min=1,max=100),
             Field("hint",Kind.STRING,"用户提供的额外备注或标识，用于重名区分，不能编造。",required=false,min=1,max=150),

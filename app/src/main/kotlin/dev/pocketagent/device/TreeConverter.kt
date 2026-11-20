@@ -41,6 +41,7 @@ class TreeConverter(private val maxDepth: Int = 60, private val maxNodes: Int = 
                 viewId = node.viewId,
                 hint = node.hint,
                 className = node.className,
+                fontFamilies = node.fontFamilies.takeUnless { node.isPassword }.orEmpty(),
             )
         }
 

@@ -7,6 +7,9 @@ import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.TypefaceSpan
 import android.view.*
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.*
@@ -25,7 +28,7 @@ class FixtureActivity:Activity() {
         super.onCreate(savedInstanceState)
         dark=intent.getStringExtra("theme")=="dark"
         scene=intent.getStringExtra("scene")?:"contacts"
-        when(scene){"chat","voice","ambiguous","hidden","delayed","animated"->chat(scene=="voice",scene=="ambiguous");else->home()}
+        when(scene){"chat","voice","ambiguous","hidden","delayed","animated"->chat(scene=="voice",scene=="ambiguous");"appearance"->appearance();else->home()}
         if(scene=="animated") {
             var tick=0
             val animate=object:Runnable { override fun run(){state.text="fixture_state tick=${++tick}";handler.postDelayed(this,20)} }
@@ -52,6 +55,27 @@ class FixtureActivity:Activity() {
         setPadding(dp(4),dp(4),dp(4),dp(4))
     }
     private fun button(text:String,click:()->Unit)=Button(this).apply { this.text=text;isAllCaps=false;setOnClickListener { click() } }
+    private fun appearance() {
+        base("外观核对")
+        root.addView(label("字形样本 Aa 012").apply {
+            text = SpannableString("字形样本 Aa 012").apply {
+                setSpan(TypefaceSpan("monospace"), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        })
+        val input = EditText(this).apply {
+            hint = "本地外观输入框"
+            setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT
+        }
+        root.addView(input)
+        root.addView(button("展开本地键盘") {
+            input.requestFocus()
+            input.post { getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                .showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT) }
+        })
+        root.isFocusableInTouchMode = true
+        root.requestFocus()
+    }
     private fun home() {
         base("本地原生聊天联调")
         root.addView(label("当前最近会话没有目标联系人"))

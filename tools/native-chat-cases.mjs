@@ -8,6 +8,9 @@ export async function nativeChatCases({run,rpc,check,saveResult,shot}) {
   if(!existsSync(apk))throw Error('先构建 :phone-fixture:assembleDebug');
   run('install','-r',apk);
   const scale=run('shell','settings','get','system','font_scale').trim();
+  const showIme=run('shell','settings','get','secure','show_ime_with_hard_keyboard').trim();
+  const originalIme=run('shell','settings','get','secure','default_input_method').trim();
+  const testIme='dev.dsh.phonefixture/.FixtureKeyboard';
   const size=run('shell','wm','size').match(/Override size: (\d+x\d+)/)?.[1];
   async function open(scene='contacts',theme='light') {
     run('shell','am','start','-S','-W','-n','dev.dsh.phonefixture/.FixtureActivity','--es','scene',scene,'--es','theme',theme);
@@ -19,6 +22,71 @@ export async function nativeChatCases({run,rpc,check,saveResult,shot}) {
     await delay(1200);run('shell','input','tap','780','2180');
     const started=saveResult('native-00-start',await pending);
     check('原生测试控制会话经手机批准启动',!started.isError);
+    run('shell','settings','put','system','font_scale','1.0');
+    run('shell','settings','put','secure','show_ime_with_hard_keyboard','1');
+    run('shell','ime','enable',testIme);
+    run('shell','ime','set',testIme);
+    await delay(700);
+    await open('appearance','dark');
+    const appearance=saveResult('native-appearance-hidden',await rpc('check_appearance',{include_visible_colors:false}));
+    check('纯文字核对包含桌面和锁屏壁纸主色且不唤起键盘',
+      !appearance.isError&&!appearance.content.some(c=>c.type==='image')&&text(appearance).includes('桌面壁纸主色=')&&
+      text(appearance).includes('锁屏壁纸主色=')&&text(appearance).includes('键盘：未显示'));
+    const styledSource=saveResult('native-styled-text',await rpc('read_ui_source'));
+    const fontRow=text(styledSource).split('\n').find(l=>l.includes('字形样本 Aa 012')&&l.includes('class='));
+    check('运行控件分别上报原文和公开字族',Boolean(fontRow?.includes('font_family="monospace"')));
+    const styledId=fontRow.match(/\[([a-z]+\d+)\]/)?.[1];
+    const styled=saveResult('native-font-by-node',await rpc('font_reference',{text:'Aa 012',node_id:styledId}));
+    check('按当前节点生成字形参照',!styled.isError&&text(styled).includes('所选控件上报字族：monospace')&&styled.content.some(c=>c.type==='image'));
+    const beforeKeyboard=await rpc('read_screen',{include_image:false});
+    const editor=text(beforeKeyboard).split('\n').find(l=>l.includes('本地外观输入框'))
+      ?.match(/bounds=\((\d+),(\d+),(\d+),(\d+)\)/)?.slice(1).map(Number);
+    if(!editor)throw Error('未找到本地外观输入框');
+    const [el,et,er,eb]=editor;
+    // Simulate the user opening their keyboard, independently of an agent action.
+    let imeShown=false;
+    for(let i=0;i<4&&!imeShown;i++){
+      run('shell','input','tap',String((el+er)>>1),String((et+eb)>>1));
+      await delay(700);
+      imeShown=run('shell','dumpsys','accessibility').includes('type=TYPE_INPUT_METHOD');
+    }
+    check('测试设备确认软键盘已经可见',imeShown);
+    let report;
+    for(let i=0;i<6;i++){
+      await delay(200);
+      report=await rpc('check_appearance');
+      if(text(report).includes('可见键盘外观：偏'))break;
+      if(!run('shell','dumpsys','input_method').includes('mInputShown=true')) {
+        run('shell','input','tap',String((el+er)>>1),String((et+eb)>>1));
+        await delay(450);
+      }
+    }
+    saveResult('native-appearance-ime',report);
+    if (!text(report).includes('可见键盘外观：偏')) {
+      console.log('IME_DIAGNOSTIC',JSON.stringify({
+        shown:run('shell','dumpsys','input_method').includes('mInputShown=true'),
+        windowExposed:run('shell','dumpsys','accessibility').split('\n').find(l=>l.includes('type=TYPE_INPUT_METHOD'))?.trim(),
+      }));
+      shot('native-ime-diagnostic');
+    }
+    check('真实键盘窗口配色和应用背景分别采样且核对不上传截图',
+      !report.isError&&!report.content.some(c=>c.type==='image')&&text(report).includes('可见键盘外观：偏')&&
+      text(report).includes('当前应用可见背景采样')&&text(report).includes('键盘位置（屏幕像素）')&&
+      !text(report).includes('测试候选词'));
+    const keyboard=text(report).match(/键盘位置（屏幕像素）：\((\d+),(\d+),(\d+),(\d+)\)/);
+    if(!keyboard)throw Error('键盘遮挡范围未返回');
+    const [,kl,kt,kr,kb]=keyboard.map(Number);
+    const blockedKey=await rpc('tap',{x:(kl+kr)>>1,y:(kt+kb)>>1});
+    check('键盘坐标被拒绝且不触发按键',blockedKey.isError&&text(blockedKey).includes('坐标落在键盘区域'));
+    const masked=saveResult('native-masked-ime',await rpc('screenshot'));
+    check('键盘展开时仍返回遮盖后的截图',!masked.isError&&masked.content.some(c=>c.type==='image'));
+    await rpc('back');
+    if(originalIme&&originalIme!=='null')run('shell','ime','set',originalIme);
+    run('shell','ime','disable',testIme);
+    run('shell','settings','put','system','font_scale',scale&&scale!=='null'?scale:'1.0');
+    if(originalIme&&originalIme!=='null'&&originalIme!==testIme)run('shell','ime','set',originalIme);
+    if(originalIme!==testIme)run('shell','ime','disable',testIme);
+    await open();
     const opened=saveResult('native-01-contact',await rpc('open_contact',{name:'张小明'}));
     check('原生通讯录搜索并核对联系人资料后进入会话',!opened.isError&&text(opened).includes('已核验会话标题')&&text(opened).includes('opened=1'));
     const raw=saveResult('native-02-source',await rpc('read_ui_source'));
@@ -76,6 +144,8 @@ export async function nativeChatCases({run,rpc,check,saveResult,shot}) {
   } finally {
     try{await rpc('control_stop');}catch{}
     run('shell','settings','put','system','font_scale',scale&&scale!=='null'?scale:'1.0');
+    if(showIme==='null')run('shell','settings','delete','secure','show_ime_with_hard_keyboard');
+    else run('shell','settings','put','secure','show_ime_with_hard_keyboard',showIme);
     if(size)run('shell','wm','size',size);else run('shell','wm','size','reset');
     run('shell','am','force-stop','dev.dsh.phonefixture');
   }

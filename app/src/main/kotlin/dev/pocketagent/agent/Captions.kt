@@ -25,6 +25,7 @@ object Captions {
         ToolCall.ReadUiSource -> "正在读取控件原始文本"
         ToolCall.FindChatInput -> "正在定位聊天正文框"
         is ToolCall.FontReference -> "正在读取字体参照"
+        is ToolCall.CheckAppearance -> "正在核对手机外观"
         is ToolCall.OpenContact -> "正在查找联系人 " + oneLine(call.name)
         is ToolCall.FillChat -> "正在向已核对的会话粘贴草稿"
         is ToolCall.TapMark -> "正在点击截图编号 ${call.index}"

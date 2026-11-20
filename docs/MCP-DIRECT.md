@@ -42,7 +42,9 @@ Content-Type: application/json
 
 在聊天应用中，`fill_chat({recipient:"张小明",text:"明天十点见",open_if_needed:true})` 可以查人、核对会话并填写草稿。重名时按候选备注补充用户给的 `hint`。只需要打开会话时用 `open_contact`。只需要查输入框时用 `find_chat_input`。填写会在必要时从语音切回文字，发送须单独确认。
 
-`read_ui_source` 返回运行控件原始文字、类名、资源 ID 和边界，并在本次任务中包含更多非重要控件。`font_reference({text:"张小明 发送"})` 加载公开字体生成参照图；它不是屏幕截图，调用后须重新观察再点击。私有字体、数据库与反编译源码不在读取范围内。
+`read_ui_source` 返回控件原文、类名、资源 ID、边界和上报的字族。`font_reference({text:"张小明",node_id:"a12"})` 可指定最新的普通文字节点；参考图不属于实际屏幕，点击前须重新读屏。
+
+`check_appearance` 返回桌面与锁屏壁纸主色、当前可见背景、键盘位置与配色的文字摘要。`{"include_visible_colors":false}` 跳过截图采样，只查公开配置和控件线索。工具不打开键盘，也不返回键盘候选词或壁纸原图。
 
 已知下一步目标时，可用 `perform_steps` 减少往返；每步按当前页面重新找目标，不携带旧节点编号。最多四步，只支持 `tap`、`type`、`scroll`、`back`、`open_app`。例如打开会话并填写草稿：
 
@@ -58,7 +60,7 @@ Content-Type: application/json
 
 | 用途 | 工具 |
 | --- | --- |
-| 观察 | `read_screen`、`read_ui_source`、`screenshot`、`zoom_screen`、`find_elements`、`read_element`、`font_reference` |
+| 观察 | `read_screen`、`read_ui_source`、`screenshot`、`zoom_screen`、`find_elements`、`read_element`、`font_reference`、`check_appearance` |
 | 聊天 | `open_contact`、`find_chat_input`、`fill_chat` |
 | 点击与输入 | `tap`、`tap_text`、`tap_mark`、`type`、`perform_steps` |
 | 手势与导航 | `scroll`、`long_press`、`double_tap`、`drag`、`back`、`home`、`open_app` |

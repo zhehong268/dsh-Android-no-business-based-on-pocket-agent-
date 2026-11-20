@@ -95,4 +95,8 @@ interface DevicePort {
     suspend fun readUiSource(): Screen = readScreen()
 
     suspend fun fontReference(text: String): FontReference? = null
+
+    suspend fun fontReference(text: String, nodeId: String): FontReference? = null
+
+    suspend fun checkAppearance(includeVisibleColors: Boolean): String? = null
 }

@@ -22,4 +22,5 @@ data class RawNode(
     val stateDescription: String? = null,
     val viewId: String? = null,
     val hint: String? = null,
+    val fontFamilies: List<String> = emptyList(),
 )

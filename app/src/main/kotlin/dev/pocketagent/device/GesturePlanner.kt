@@ -2,7 +2,9 @@ package dev.pocketagent.device
 
 data class Point(val x: Int, val y: Int)
 
-data class SwipePath(val from: Point, val to: Point)
+data class SwipePath(val from: Point, val to: Point) {
+    fun bounds() = Bounds(minOf(from.x, to.x), minOf(from.y, to.y), maxOf(from.x, to.x) + 1, maxOf(from.y, to.y) + 1)
+}
 
 /** Plans gesture coordinates that stay clear of the system-gesture edges of the screen. */
 class GesturePlanner(private val screen: Bounds, private val edgeInsetPx: Int) {

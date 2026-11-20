@@ -176,31 +176,67 @@ class AccessibilityDevice(
      */
     override suspend fun shot(): Shot? = captureShot(null)
     override suspend fun zoom(bounds: Bounds): Shot? = captureShot(bounds)
-    override suspend fun fontReference(text:String):FontReference? = withContext(Dispatchers.Default) {
+    override suspend fun fontReference(text: String): FontReference? = fontReferenceAt(text, null)
+    override suspend fun fontReference(text: String, nodeId: String): FontReference? = fontReferenceAt(text, nodeId)
+
+    private suspend fun fontReferenceAt(text: String, nodeId: String?): FontReference? = withContext(Dispatchers.Default) {
         ensureUsable()
         val screen=observation?.screen ?: return@withContext null
-        if(reader.currentNow().packageName!=screen.packageName || blockedApps.isBlocked(screen.packageName,null))return@withContext null
-        environment.fontReference(screen.packageName,text)
+        val current = reader.currentNow()
+        if (current.packageName!=screen.packageName || current.id!=screen.windowId || blockedApps.isBlocked(screen.packageName,null)) return@withContext null
+        val node = if (nodeId == null) null else screen.find(nodeId)?.takeUnless { it.isPassword || it.editable } ?: return@withContext null
+        environment.fontReference(screen, text, node)
+    }
+
+    override suspend fun checkAppearance(includeVisibleColors: Boolean): String? = withContext(Dispatchers.Default) {
+        ensureUsable()
+        val screen = observation?.screen ?: return@withContext null
+        if (blockedApps.isBlocked(screen.packageName, null) || screen.packageName.isBlank()) return@withContext null
+        val text = environment.textProfile(screen, refreshWallpaper = true)
+        if (!includeVisibleColors) return@withContext text
+        val bitmap = withOverlaysHidden { checkedBitmap(screen) } ?: return@withContext text + "\n当前画面配色不可读或窗口已变化。"
+        try { text + "\n" + environment.visibleProfile(bitmap, screen) }
+        finally { bitmap.recycle() }
+    }
+
+    // Check both sides of the capture. A newly shown keyboard or switched window changes the snapshot.
+    private suspend fun checkedBitmap(expected: Screen): Bitmap? {
+        suspend fun sameWindow(): Boolean {
+            val current = reader.current()
+            return current.packageName.isNotEmpty() && current.packageName == expected.packageName &&
+                current.id == expected.windowId && current.keyboard.bounds == expected.keyboardBounds &&
+                current.keyboard.visible == expected.keyboardVisible && !blockedApps.isBlocked(current.packageName, null)
+        }
+        ensureUsable()
+        if (!sameWindow()) return null
+        val image = captureBitmap() ?: return null
+        if (keyguard?.isKeyguardLocked == true || isClosed() || !sameWindow()) {
+            image.recycle()
+            return null
+        }
+        return image
     }
 
     private suspend fun captureShot(region: Bounds?): Shot? {
         ensureUsable()
         val expected = observation?.screen ?: return null
-        val current = reader.current().packageName
-        if (current.isEmpty() || current != expected.packageName || blockedApps.isBlocked(current,null)) return null
-        val marks = marksFor(expected).filter { mark -> expected.all().none { it.isPassword && it.bounds.contains(mark.x,mark.y) } }
+        val sensitive = expected.all().filter { it.isPassword }.map { it.bounds }.toList()
+        val marks = marksFor(expected).filter { mark ->
+            !expected.keyboardCovers(mark.x, mark.y) && sensitive.none { it.contains(mark.x,mark.y) }
+        }
         return withOverlaysHidden {
             // Visibility updates reach SurfaceFlinger on a later frame; do not capture our own caption.
             delay(80)
-            captureBitmap()?.let { bitmap ->
-            val sensitive = expected.all().filter { it.isPassword }.map { it.bounds }.toList()
-            if (sensitive.isNotEmpty()) {
-                val canvas=Canvas(bitmap)
-                val paint=Paint().apply { color=android.graphics.Color.BLACK }
-                sensitive.forEach { canvas.drawRect(it.left.toFloat(),it.top.toFloat(),it.right.toFloat(),it.bottom.toFloat(),paint) }
+            checkedBitmap(expected)?.let { bitmap ->
+            val visualContext = environment.visibleProfile(bitmap,expected)
+            val canvas=Canvas(bitmap)
+            fun mask(bounds: List<Bounds>, color: Int) {
+                val paint = Paint().apply { this.color = color }
+                bounds.forEach { canvas.drawRect(it.left.toFloat(),it.top.toFloat(),it.right.toFloat(),it.bottom.toFloat(),paint) }
             }
+            mask(sensitive, android.graphics.Color.BLACK)
+            mask(expected.keyboardBounds, 0xFF303640.toInt())
             val hash = contentHash(bitmap,expected.root.bounds)
-            val visualContext = environment.background(bitmap,expected)
             if (region != null) {
                 val root=expected.root.bounds
                 if (region.left < maxOf(0,root.left) || region.top < maxOf(0,root.top) || region.right > minOf(bitmap.width,root.right) || region.bottom > minOf(bitmap.height,root.bottom) || region.right<=region.left || region.bottom<=region.top) {
@@ -332,9 +368,9 @@ class AccessibilityDevice(
         if (current.screen.packageName.isEmpty()) return false
         // A point outside every observed node is outside the window the model saw (another split-screen half,
         // a system bar). Revalidator would pass it when the live point is unlabelled too; refuse it here.
-        if (current.screen.deepestAt(x, y) == null) return false
+        if (current.screen.deepestAt(x, y) == null || current.screen.keyboardCovers(x, y)) return false
         val fresh = reader.read(current.screen.observation).screen
-        if (fresh.packageName.isEmpty() || fresh.packageName != current.screen.packageName) return false
+        if (fresh.packageName.isEmpty() || fresh.packageName != current.screen.packageName || fresh.keyboardCovers(x, y)) return false
         return revalidator.pointStillMatches(current.screen, x, y, fresh)
     }
 
@@ -566,9 +602,10 @@ class AccessibilityDevice(
     private suspend fun pressNode(node: ScreenNode, twice: Boolean): ActionResult {
         val live = validatedNode(node) ?: return SCREEN_CHANGED
         if (!live.isEnabled || live.isPassword) return ActionResult.Failed("目标不可用")
-        if (!twice && live.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) return ActionResult.Ok
         val point = planner().tapPoint(node.bounds)
         if (!node.bounds.contains(point.x,point.y)) return SCREEN_CHANGED
+        if (reader.current().keyboard.bounds.any { it.contains(point.x, point.y) }) return KEYBOARD_COVERS_TARGET
+        if (!twice && live.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) return ActionResult.Ok
         if (!twice) return gesture(Path().apply { moveTo(point.x.toFloat(),point.y.toFloat()) }, 650)
         val path = Path().apply { moveTo(point.x.toFloat(),point.y.toFloat()) }
         val description = GestureDescription.Builder()
@@ -583,15 +620,19 @@ class AccessibilityDevice(
         val inset = 24
         if (listOf(action.fromX,action.toX).any { it < bounds.left+inset || it >= bounds.right-inset } ||
             listOf(action.fromY,action.toY).any { it < bounds.top+inset || it >= bounds.bottom-inset }) return SCREEN_CHANGED
+        val pathBounds = SwipePath(Point(action.fromX, action.fromY), Point(action.toX, action.toY)).bounds()
+        if (reader.current().keyboard.bounds.any { it.intersects(pathBounds) }) return KEYBOARD_COVERS_TARGET
         return gesture(Path().apply { moveTo(action.fromX.toFloat(),action.fromY.toFloat()); lineTo(action.toX.toFloat(),action.toY.toFloat()) },action.durationMs.toLong())
     }
 
     private suspend fun tapGesture(point: Point): ActionResult {
+        if (reader.current().keyboard.bounds.any { it.contains(point.x, point.y) }) return KEYBOARD_COVERS_TARGET
         val path = Path().apply { moveTo(point.x.toFloat(), point.y.toFloat()) }
         return gesture(path, TAP_MS)
     }
 
     private suspend fun swipeGesture(swipe: SwipePath, careful: Boolean): ActionResult {
+        if (reader.current().keyboard.bounds.any { it.intersects(swipe.bounds()) }) return KEYBOARD_COVERS_TARGET
         val path = Path().apply {
             moveTo(swipe.from.x.toFloat(), swipe.from.y.toFloat())
             lineTo(swipe.to.x.toFloat(), swipe.to.y.toFloat())
@@ -802,6 +843,7 @@ class AccessibilityDevice(
         const val SCREENSHOT_LONG_SIDE_PX = 1_280
         const val SCREENSHOT_RETRY_MS = 350L
         val SCREEN_CHANGED = ActionResult.Failed("界面变了")
+        val KEYBOARD_COVERS_TARGET = ActionResult.Failed("键盘遮挡了目标；请先收起键盘再读屏。")
         val GESTURE_INTERRUPTED = ActionResult.Failed("手势被打断了", mayHaveEffect = true)
     }
 }

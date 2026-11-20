@@ -14,7 +14,14 @@ class ScreenSerializer(private val ownPackage: String, private val maxChars: Int
         val out = StringBuilder()
         out.append("<screen_data app=\"").append(cleanUntrusted(screen.packageName, MAX_LABEL))
             .append("\" label=\"").append(cleanUntrusted(screen.appLabel.orEmpty(), MAX_LABEL)).append("\">\n")
-        if (screen.keyboardVisible) out.append("[键盘已展开，可能遮挡下半屏]\n")
+        if (screen.keyboardVisible) {
+            out.append("[键盘已展开；不要点击键盘，输入使用应用正文框与粘贴。")
+            if (screen.keyboardBounds.isNotEmpty()) {
+                out.append("键盘位置（屏幕像素）：")
+                out.append(screen.keyboardBounds.take(6).joinToString(" ") { "(${it.left},${it.top},${it.right},${it.bottom})" })
+            }
+            out.append("]\n")
+        }
         screen.environment?.let { out.append("<display_context>").append(cleanUntrusted(it,2000)).append("</display_context>\n") }
         val budget = maxChars - out.length - 60
         val selected = if (lines.sumOf { it.text.length + 1 } <= budget) lines.indices.toSet() else {
@@ -43,6 +50,8 @@ class ScreenSerializer(private val ownPackage: String, private val maxChars: Int
                 append(" bounds=").append(node.bounds)
                 for((key,value) in listOf("text" to node.text,"description" to node.description,"hint" to node.hint))
                     if(value!=null)append(' ').append(key).append("=\"").append(cleanUntrustedBlock(value,4000)).append('"')
+                if (node.fontFamilies.isNotEmpty()) append(" font_family=\"")
+                    .append(cleanUntrusted(node.fontFamilies.joinToString(", "), 100)).append('"')
                 append('\n')
             }
             if(length+row.length<48_000)append(row) else omitted++

@@ -174,7 +174,7 @@ class McpHandler(private val control: PhoneControl? = null, private val tasks: P
     }.toString()
 
     companion object {
-        val CONTROL_ACTIONS = setOf("read_ui_source","find_chat_input","font_reference","open_contact","fill_chat","perform_steps","zoom_screen","read_screen","screenshot","tap","tap_text","tap_mark","type","scroll","back","home","open_app","wait_for","find_elements","read_element","long_press","double_tap","drag")
+        val CONTROL_ACTIONS = setOf("read_ui_source","find_chat_input","font_reference","check_appearance","open_contact","fill_chat","perform_steps","zoom_screen","read_screen","screenshot","tap","tap_text","tap_mark","type","scroll","back","home","open_app","wait_for","find_elements","read_element","long_press","double_tap","drag")
         const val TOOL = "run_task"
         const val MAX_TASK = 2_000
         private const val LATEST = "2025-06-18"

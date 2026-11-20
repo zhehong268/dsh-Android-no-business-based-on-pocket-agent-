@@ -4,7 +4,11 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.pm.PackageManager
 import android.graphics.Rect
+import android.graphics.Region
+import android.graphics.RegionIterator
 import android.os.Build
+import android.text.Spanned
+import android.text.style.TypefaceSpan
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import dev.pocketagent.device.Bounds
@@ -16,6 +20,7 @@ import dev.pocketagent.device.TreeConverter
 import dev.pocketagent.device.WindowKind
 import dev.pocketagent.device.WindowPicker
 import dev.pocketagent.device.WindowSummary
+import dev.pocketagent.device.KeyboardRegion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.IdentityHashMap
@@ -39,6 +44,7 @@ internal class ScreenReader(private val service: AccessibilityService) {
         val root: AccessibilityNodeInfo?,
         val bounds: Bounds?,
         val ownWindowBounds: List<Bounds>,
+        val keyboard: KeyboardRegion,
     ) {
         /** The root node's package, or empty when the window has no readable root. */
         val packageName: String get() = root?.packageName?.toString().orEmpty()
@@ -75,7 +81,8 @@ internal class ScreenReader(private val service: AccessibilityService) {
                 appLabel = appLabel(packageName),
                 root = screenRoot,
                 ownWindowBounds = window.ownWindowBounds,
-                keyboardVisible = service.windows?.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } == true,
+                keyboardVisible = window.keyboard.visible,
+                keyboardBounds = window.keyboard.bounds,
                 windowId = window.id,
                 environment = environment.describe(),
             ),
@@ -86,11 +93,22 @@ internal class ScreenReader(private val service: AccessibilityService) {
     private fun pickWindow(): CurrentWindow {
         val windows: List<AccessibilityWindowInfo> = service.windows ?: emptyList()
         val roots = HashMap<Int, AccessibilityNodeInfo?>()
+        val keyboardRects = mutableListOf<Bounds>()
+        var keyboardVisible = false
         val summaries = windows.map { window ->
-            val root = window.root
-            roots[window.id] = root
             val rect = Rect()
             window.getBoundsInScreen(rect)
+            val input = window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD
+            if (input && !rect.isEmpty) {
+                keyboardVisible = true
+                val iterator = RegionIterator(Region().also { window.getRegionInScreen(it) })
+                val piece = Rect()
+                val pieces = mutableListOf<Bounds>()
+                while (pieces.size <= 12 && iterator.next(piece)) pieces += piece.toBounds()
+                keyboardRects += if (pieces.isEmpty() || pieces.size > 12) listOf(rect.toBounds()) else pieces
+            }
+            val root = if (input) null else window.root
+            roots[window.id] = root
             WindowSummary(
                 id = window.id,
                 packageName = root?.packageName?.toString(),
@@ -106,6 +124,7 @@ internal class ScreenReader(private val service: AccessibilityService) {
             root = id?.let { roots[it] },
             bounds = summaries.firstOrNull { it.id == id }?.bounds,
             ownWindowBounds = choice.ownWindowBounds,
+            keyboard = KeyboardRegion(keyboardVisible, keyboardRects.sortedWith(compareBy({ it.top }, { it.left }, { it.bottom }, { it.right }))),
         )
     }
 
@@ -159,15 +178,18 @@ internal class ScreenReader(private val service: AccessibilityService) {
             }
             val rect = Rect()
             node.getBoundsInScreen(rect)
+            val inputType = node.inputType
+            val isPassword = node.isPassword || dev.pocketagent.device.TextEntry.isPasswordType(inputType)
+            val text = if (isPassword || node.isShowingHintText) null else node.text
             val raw = RawNode(
                 className = node.className?.toString(),
-                text = node.text?.toString()?.takeUnless { node.isShowingHintText },
+                text = text?.toString(),
                 description = node.contentDescription?.toString(),
                 clickable = node.isClickable,
                 editable = node.isEditable || node.className?.toString()?.endsWith("EditText")==true ||
-                    (node.inputType!=0 && node.actionList.any { it.id==AccessibilityNodeInfo.ACTION_SET_TEXT || it.id==AccessibilityNodeInfo.ACTION_PASTE }),
+                    (inputType!=0 && node.actionList.any { it.id==AccessibilityNodeInfo.ACTION_SET_TEXT || it.id==AccessibilityNodeInfo.ACTION_PASTE }),
                 scrollable = node.isScrollable,
-                isPassword = node.isPassword || dev.pocketagent.device.TextEntry.isPasswordType(node.inputType),
+                isPassword = isPassword,
                 visibleToUser = visible,
                 packageName = node.packageName?.toString().orEmpty(),
                 bounds = rect.toBounds(),
@@ -181,6 +203,11 @@ internal class ScreenReader(private val service: AccessibilityService) {
                 stateDescription = node.stateDescription?.toString() ?: if (Build.VERSION.SDK_INT >= 36 && node.checked == AccessibilityNodeInfo.CHECKED_STATE_PARTIAL) "部分选中" else null,
                 viewId = node.viewIdResourceName,
                 hint = node.hintText?.toString(),
+                fontFamilies = (text as? Spanned)?.let { styled ->
+                    styled.getSpans(0, styled.length, TypefaceSpan::class.java)
+                        .asSequence().mapNotNull { it.family?.takeIf { name -> name.matches(FONT_FAMILY) } }
+                        .distinct().take(3).toList()
+                }.orEmpty(),
             )
             live[raw] = node
             return raw
@@ -190,6 +217,7 @@ internal class ScreenReader(private val service: AccessibilityService) {
     companion object {
         const val MAX_DEPTH = 60
         const val MAX_NODES = 1_500
+        private val FONT_FAMILY = Regex("[\\p{L}\\p{N}_ -]{1,48}")
 
         private fun kindOf(type: Int): WindowKind = when (type) {
             AccessibilityWindowInfo.TYPE_APPLICATION -> WindowKind.APPLICATION
