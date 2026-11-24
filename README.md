@@ -1,5 +1,7 @@
 # dsh Android
 
+最新融合版为 **1.2.0-fusion.1**。构建方式和本次新增的开源来源见 [DSH 融合版](fusion/README.md)。原版 Android 的安装与使用说明见下文。
+
 [![维护者：zhehong268](https://img.shields.io/badge/Maintainer-zhehong268-181717?logo=github)](https://github.com/zhehong268)
 [![开源协议：AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue)](LICENSE)
 

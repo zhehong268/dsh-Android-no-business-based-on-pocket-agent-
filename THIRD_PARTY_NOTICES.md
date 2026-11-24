@@ -1,5 +1,9 @@
 # Third-Party Notices and Licenses
 
+## 融合版新增来源
+
+DSH 融合版基于 [DSH Go 1.2.0](https://github.com/ccch1mneyyy/dsh-Go/releases/tag/v1.2.0)（AGPL-3.0），由 zhehong268 维护。DSH Go、DeepSeek Harness、Phase、SQLite 以及原版代码在这次融合中的用途见 [融合版开源来源](fusion/README.md#本次借鉴的开源项目)。
+
 This project incorporates components from the following third-party software:
 
 ---
